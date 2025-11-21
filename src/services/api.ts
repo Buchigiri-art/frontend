@@ -1,14 +1,21 @@
+// src/services/api.ts
 import axios from 'axios';
 import { Quiz, Student, QuizShare } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+// Optional: tiny debug – remove if you don't want console logs
+if (import.meta.env.DEV) {
+  console.log('[API] base URL =', API_BASE_URL);
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: true, // Enable sending cookies
+  // Critical for cookies (token) to be sent between Vercel & Render
+  withCredentials: true,
 });
 
 // Quiz API
