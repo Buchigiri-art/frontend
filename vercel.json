@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/quiz/attempt/:token*", "destination": "/" },
+    { "source": "/results/:path*", "destination": "/" },
+    { "source": "/dashboard/:path*", "destination": "/" },
+    { "source": "/:path*", "destination": "/" }
+  ]
+}
