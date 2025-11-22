@@ -14,8 +14,11 @@ import { Loader2, Clock, CheckCircle2, AlertCircle, Maximize2 } from 'lucide-rea
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const MAX_WARNINGS = 3; // 3 warnings, then auto-submit as cheat
-const LEAVE_TIMEOUT_MS = 10_000; // 10 seconds to come back before auto-submit
+
+// 3 warnings -> then auto-submit as cheated
+const MAX_WARNINGS = 3;
+// After leaving/minimizing, 10s to come back, else auto-submit
+const LEAVE_TIMEOUT_MS = 10_000;
 
 interface Question {
   id: string;
