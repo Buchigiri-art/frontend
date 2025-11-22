@@ -621,9 +621,9 @@ export default function StudentQuizPage() {
                 <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CSE">CSE</SelectItem>
-                  <SelectItem value="ISE">ISE</SelectItem>
-                  <SelectItem value="ECE">ECE</SelectItem>
-                  <SelectItem value="EEE">EEE</SelectItem>
+                  <SelectItem value="ISE">AI-DS</SelectItem>
+                  <SelectItem value="ECE">AI-ML</SelectItem>
+                  <SelectItem value="EEE">ECE</SelectItem>
                   <SelectItem value="ME">ME</SelectItem>
                   <SelectItem value="CE">CE</SelectItem>
                 </SelectContent>
