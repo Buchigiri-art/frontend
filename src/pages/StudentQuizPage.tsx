@@ -17,6 +17,11 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;        // 3 warnings, then auto-submit as cheat
 const LEAVE_TIMEOUT_MS = 10000; // 10 seconds to come back before auto-submit
 
+// Detect mobile – used to relax some events on phones
+const isMobile =
+  typeof navigator !== 'undefined' &&
+  /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 interface Question {
   id: string;
   type: 'mcq' | 'short-answer';
@@ -153,7 +158,7 @@ export default function StudentQuizPage() {
         setStudentName(data.studentInfo.name);
         setStudentUSN(data.studentInfo.usn);
 
-        setQuizStarted(true);     // triggers monitoring via useEffect
+        setQuizStarted(true); // triggers monitoring via useEffect
         applyBodyStyles();
       } else {
         setShowInfoForm(true);
@@ -353,9 +358,6 @@ export default function StudentQuizPage() {
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
 
-    // keep passive: false so we *can* call preventDefault when needed (long-press only)
-    document.addEventListener('touchstart', onTouchStart as any, { passive: false });
-
     applyBodyStyles();
   };
 
@@ -372,7 +374,6 @@ export default function StudentQuizPage() {
 
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
-    document.removeEventListener('touchstart', onTouchStart as any);
   };
 
   // ----------------- WARNINGS / FLAGS -----------------
@@ -426,6 +427,10 @@ export default function StudentQuizPage() {
 
   const onWindowBlur = () => {
     if (!guard()) return;
+
+    // On mobile, blur can happen for lots of harmless things (keyboard, UI),
+    // so we ignore blur warnings completely there.
+    if (isMobile) return;
 
     sendFlag('window:blur');
     const count = localWarningsRef.current;
@@ -515,40 +520,23 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ✅ UPDATED: allow normal taps on mobile, only try to block long-press
-  const onTouchStart = (e: TouchEvent) => {
-    if (!guard()) return;
-
-    // Don't block normal taps. Only if the user keeps touching
-    // for ~600ms (long-press), we call preventDefault to try
-    // and cancel context menu / text selection.
-    const timer = window.setTimeout(() => {
-      e.preventDefault();
-    }, 600);
-
-    const clear = () => {
-      clearTimeout(timer);
-      document.removeEventListener('touchend', clear as any);
-      document.removeEventListener('touchmove', clear as any);
-      document.removeEventListener('touchcancel', clear as any);
-    };
-
-    document.addEventListener('touchend', clear as any, { once: true });
-    document.addEventListener('touchmove', clear as any, { once: true });
-    document.addEventListener('touchcancel', clear as any, { once: true });
-  };
-
   // ----------------- BODY STYLES -----------------
   const applyBodyStyles = () => {
     try {
       const body = document.body;
+
       if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
       if (!body.dataset.prevWebkitTouchCallout) body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
+      if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
+      // Lock page interactions
       body.style.userSelect = 'none';
       (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
+
+      // 🚨 Lock page scroll, but textarea scroll still works
+      body.style.overflow = 'hidden';
     } catch {
       // ignore
     }
@@ -562,10 +550,12 @@ export default function StudentQuizPage() {
         (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
       }
       if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
+      if (body.dataset.prevOverflow !== undefined) body.style.overflow = body.dataset.prevOverflow;
 
       delete body.dataset.prevUserSelect;
       delete body.dataset.prevWebkitTouchCallout;
       delete body.dataset.prevTouchAction;
+      delete body.dataset.prevOverflow;
     } catch {
       // ignore
     }
