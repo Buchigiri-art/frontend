@@ -14,7 +14,7 @@ import { Loader2, Clock, CheckCircle2, AlertCircle, Maximize2 } from 'lucide-rea
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const MAX_WARNINGS = 3;        // 3 warnings, then auto-submit as cheat
+const MAX_WARNINGS = 3; // 3 warnings, then auto-submit as cheat
 const LEAVE_TIMEOUT_MS = 10000; // 10 seconds to come back before auto-submit
 
 // Detect mobile – used to relax some events on phones
@@ -354,6 +354,7 @@ export default function StudentQuizPage() {
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
+    window.addEventListener('pagehide', onPageHide, true); // NEW: pagehide
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
@@ -371,6 +372,7 @@ export default function StudentQuizPage() {
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
+    window.removeEventListener('pagehide', onPageHide, true); // NEW: pagehide
 
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
@@ -413,6 +415,14 @@ export default function StudentQuizPage() {
     if (!guard()) return;
 
     if (document.visibilityState !== 'visible') {
+      // MOBILE: any leave (including Gemini, app switch) = instant cheat
+      if (isMobile) {
+        sendFlag('visibility:hidden:mobile');
+        handleAutoSubmitAsCheat('visibility:hidden:mobile-immediate');
+        return;
+      }
+
+      // DESKTOP: existing warning + timeout logic
       sendFlag('visibility:hidden');
       const count = localWarningsRef.current;
       if (count >= MAX_WARNINGS) {
@@ -481,6 +491,13 @@ export default function StudentQuizPage() {
     e.returnValue = '';
   };
 
+  // NEW: pagehide → auto-submit (covers navigation / app closing / some assistant flows)
+  const onPageHide = (e: PageTransitionEvent | Event) => {
+    if (!guard()) return;
+    sendFlag('pagehide');
+    handleAutoSubmitAsCheat('pagehide');
+  };
+
   const onContextMenu = (e: Event) => {
     if (!guard()) return;
     e.preventDefault();
@@ -526,7 +543,8 @@ export default function StudentQuizPage() {
       const body = document.body;
 
       if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
-      if (!body.dataset.prevWebkitTouchCallout) body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
+      if (!body.dataset.prevWebkitTouchCallout)
+        body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
       if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
@@ -611,12 +629,22 @@ export default function StudentQuizPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">Full Name *</Label>
-              <Input id="name" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Full name" />
+              <Input
+                id="name"
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+                placeholder="Full name"
+              />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="usn">USN *</Label>
-              <Input id="usn" value={studentUSN} onChange={(e) => setStudentUSN(e.target.value.toUpperCase())} placeholder="USN" />
+              <Input
+                id="usn"
+                value={studentUSN}
+                onChange={(e) => setStudentUSN(e.target.value.toUpperCase())}
+                placeholder="USN"
+              />
             </div>
 
             <div className="space-y-2">
@@ -627,7 +655,9 @@ export default function StudentQuizPage() {
             <div className="space-y-2">
               <Label htmlFor="branch">Branch *</Label>
               <Select value={studentBranch} onValueChange={setStudentBranch}>
-                <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select branch" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CSE">CSE</SelectItem>
                   <SelectItem value="ISE">ISE</SelectItem>
@@ -643,7 +673,9 @@ export default function StudentQuizPage() {
               <div>
                 <Label>Year *</Label>
                 <Select value={studentYear} onValueChange={setStudentYear}>
-                  <SelectTrigger><SelectValue placeholder="Year" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Year" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="1">1</SelectItem>
                     <SelectItem value="2">2</SelectItem>
@@ -655,10 +687,14 @@ export default function StudentQuizPage() {
               <div>
                 <Label>Semester *</Label>
                 <Select value={studentSemester} onValueChange={setStudentSemester}>
-                  <SelectTrigger><SelectValue placeholder="Sem" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sem" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {[1,2,3,4,5,6,7,8].map((s) => (
-                      <SelectItem key={s} value={s.toString()}>{s}</SelectItem>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                      <SelectItem key={s} value={s.toString()}>
+                        {s}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -668,12 +704,20 @@ export default function StudentQuizPage() {
             <div>
               <p className="text-sm text-muted-foreground">
                 Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen, you get a warning.
-                After 3 warnings, the quiz is blocked and auto-submitted. If you stay away for more than 10 seconds, it will also auto-submit.
+                After 3 warnings, the quiz is blocked and auto-submitted. On mobile, if you leave the quiz
+                screen (including using system assistants like Gemini) it may be auto-submitted immediately.
+                If you stay away for more than 10 seconds, it will also auto-submit.
               </p>
             </div>
 
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
-              {loading ? <> <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...</> : 'Start Quiz'}
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...
+                </>
+              ) : (
+                'Start Quiz'
+              )}
             </Button>
           </CardContent>
         </Card>
@@ -741,7 +785,9 @@ export default function StudentQuizPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Question {currentQuestion + 1}</CardTitle>
-              <CardDescription className="text-base text-foreground pt-2">{question.question}</CardDescription>
+              <CardDescription className="text-base text-foreground pt-2">
+                {question.question}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {question.type === 'mcq' && question.options ? (
@@ -779,9 +825,7 @@ export default function StudentQuizPage() {
               <div className="flex items-center justify-between pt-4 border-t">
                 <Button
                   variant="outline"
-                  onClick={() =>
-                    setCurrentQuestion(Math.max(0, currentQuestion - 1))
-                  }
+                  onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
                   disabled={currentQuestion === 0}
                 >
                   Previous
