@@ -353,6 +353,7 @@ export default function StudentQuizPage() {
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
 
+    // keep passive: false so we *can* call preventDefault when needed (long-press only)
     document.addEventListener('touchstart', onTouchStart as any, { passive: false });
 
     applyBodyStyles();
@@ -514,9 +515,27 @@ export default function StudentQuizPage() {
     }
   };
 
+  // ✅ UPDATED: allow normal taps on mobile, only try to block long-press
   const onTouchStart = (e: TouchEvent) => {
     if (!guard()) return;
-    e.preventDefault(); // best-effort to suppress long-press context menu
+
+    // Don't block normal taps. Only if the user keeps touching
+    // for ~600ms (long-press), we call preventDefault to try
+    // and cancel context menu / text selection.
+    const timer = window.setTimeout(() => {
+      e.preventDefault();
+    }, 600);
+
+    const clear = () => {
+      clearTimeout(timer);
+      document.removeEventListener('touchend', clear as any);
+      document.removeEventListener('touchmove', clear as any);
+      document.removeEventListener('touchcancel', clear as any);
+    };
+
+    document.addEventListener('touchend', clear as any, { once: true });
+    document.addEventListener('touchmove', clear as any, { once: true });
+    document.addEventListener('touchcancel', clear as any, { once: true });
   };
 
   // ----------------- BODY STYLES -----------------
@@ -621,9 +640,9 @@ export default function StudentQuizPage() {
                 <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CSE">CSE</SelectItem>
-                  <SelectItem value="ISE">AI-DS</SelectItem>
-                  <SelectItem value="ECE">AI-ML</SelectItem>
-                  <SelectItem value="EEE">ECE</SelectItem>
+                  <SelectItem value="ISE">ISE</SelectItem>
+                  <SelectItem value="ECE">ECE</SelectItem>
+                  <SelectItem value="EEE">EEE</SelectItem>
                   <SelectItem value="ME">ME</SelectItem>
                   <SelectItem value="CE">CE</SelectItem>
                 </SelectContent>
