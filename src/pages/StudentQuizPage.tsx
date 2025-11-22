@@ -1,24 +1,27 @@
 // src/pages/StudentQuizPage.tsx
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card, CardContent, CardHeader, CardTitle, CardDescription,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/use-toast';
-import { Loader2, Clock, CheckCircle2, AlertCircle, Maximize2 } from 'lucide-react';
+import {
+  Loader2, Clock, CheckCircle2, AlertCircle, Maximize2,
+} from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-
-// 3 warnings -> then auto-submit as cheated
-const MAX_WARNINGS = 3;
-// After leaving/minimizing, 10s to come back, else auto-submit
-const LEAVE_TIMEOUT_MS = 10_000;
+const MAX_WARNINGS = 3;        // max allowed violations before auto-submit
+const GRACE_SECONDS = 10;      // time to return to fullscreen/focus
 
 interface Question {
   id: string;
@@ -65,11 +68,10 @@ export default function StudentQuizPage() {
   const [isCheated, setIsCheated] = useState(false);
   const localWarningsRef = useRef<number>(0);
   const lastWarnAtRef = useRef<number>(0);
-  const tokenRef = useRef<string | undefined>(token);
   const monitoringRef = useRef<boolean>(false);
-  const leaveTimeoutRef = useRef<number | null>(null); // for 10s leave timer
+  const autoSubmitTimeoutRef = useRef<number | null>(null);
 
-  // AttemptId ref for async auto-submit
+  const tokenRef = useRef<string | undefined>(token);
   const attemptIdRef = useRef<string>('');
   attemptIdRef.current = attemptId;
 
@@ -78,13 +80,13 @@ export default function StudentQuizPage() {
     fetchQuizData();
     return () => {
       removeMonitoringListeners();
-      clearLeaveTimer();
       restoreBodyStyles();
+      clearAutoSubmitTimer();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Timer countdown
+  // Timer
   useEffect(() => {
     if (quizStarted && timeLeft > 0 && !quizSubmitted) {
       const timer = setInterval(() => {
@@ -175,14 +177,12 @@ export default function StudentQuizPage() {
       setShowInfoForm(false);
 
       applyBodyStyles();
-
-      // Try fullscreen (may be blocked), then enable monitoring
       await tryEnterFullscreen(3, 300);
       enableMonitoring();
 
       toast({
         title: 'Quiz Started',
-        description: 'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3).',
+        description: 'Quiz is being monitored. Focus on this window and stay in fullscreen.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -196,7 +196,7 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Submit quiz normally
+  // Submit quiz to server (normal submit)
   const handleSubmitQuiz = async () => {
     if (submitting || quizSubmitted) return;
 
@@ -208,8 +208,8 @@ export default function StudentQuizPage() {
       });
 
       removeMonitoringListeners();
-      clearLeaveTimer();
       restoreBodyStyles();
+      clearAutoSubmitTimer();
       setQuizSubmitted(true);
       toast({
         title: 'Quiz Submitted',
@@ -226,17 +226,18 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Auto-submit as cheat
+  // Auto-submit as cheat (called after 3 warnings or after 10s grace)
   const handleAutoSubmitAsCheat = async (reason = 'violation:auto-submit') => {
     if (quizSubmitted) return;
-    setIsCheated(true);
 
     try {
-      // Best-effort flag
+      // best-effort flag
       await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
     } catch (err) {
       console.warn('Flagging failed during auto-submit:', err);
     }
+
+    setIsCheated(true);
 
     try {
       await axios.post(`${API_URL}/student-quiz/attempt/submit`, {
@@ -248,13 +249,13 @@ export default function StudentQuizPage() {
     }
 
     removeMonitoringListeners();
-    clearLeaveTimer();
     restoreBodyStyles();
+    clearAutoSubmitTimer();
     setQuizSubmitted(true);
 
     toast({
       title: 'Quiz Blocked',
-      description: 'Repeated or severe violations detected. The quiz has been auto-submitted as cheated.',
+      description: 'Repeated violations detected. The quiz was auto-submitted.',
       variant: 'destructive',
     });
   };
@@ -270,16 +271,18 @@ export default function StudentQuizPage() {
     const attemptFS = async (): Promise<boolean> => {
       try {
         if (document.fullscreenElement) return true;
-        const el: any = document.documentElement;
-        if (el.requestFullscreen) {
-          await el.requestFullscreen();
-        } else if (el.webkitRequestFullscreen) {
-          await el.webkitRequestFullscreen();
+        const elem: any = document.documentElement;
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+          return !!document.fullscreenElement;
+        } else if (elem.webkitRequestFullscreen) {
+          await elem.webkitRequestFullscreen();
+          return !!document.fullscreenElement;
         }
-        return !!document.fullscreenElement;
       } catch {
-        return false;
+        // ignore
       }
+      return false;
     };
 
     for (let i = 0; i < retries; i++) {
@@ -290,26 +293,22 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // ----------------- LEAVE TIMER HELPERS -----------------
-  const startLeaveTimer = (reason: string) => {
-    if (leaveTimeoutRef.current != null || quizSubmitted) return;
-    leaveTimeoutRef.current = window.setTimeout(() => {
-      leaveTimeoutRef.current = null;
-      // If still not visible, treat as cheat
-      if (document.visibilityState !== 'visible') {
-        handleAutoSubmitAsCheat(`${reason}:timeout`);
-      }
-    }, LEAVE_TIMEOUT_MS);
+  // ----------------- AUTO-SUBMIT TIMER HELPERS -----------------
+  const scheduleAutoSubmit = (reason: string) => {
+    clearAutoSubmitTimer();
+    autoSubmitTimeoutRef.current = window.setTimeout(() => {
+      handleAutoSubmitAsCheat(`${reason}:timeout-${GRACE_SECONDS}s`);
+    }, GRACE_SECONDS * 1000);
   };
 
-  const clearLeaveTimer = () => {
-    if (leaveTimeoutRef.current != null) {
-      clearTimeout(leaveTimeoutRef.current);
-      leaveTimeoutRef.current = null;
+  const clearAutoSubmitTimer = () => {
+    if (autoSubmitTimeoutRef.current !== null) {
+      window.clearTimeout(autoSubmitTimeoutRef.current);
+      autoSubmitTimeoutRef.current = null;
     }
   };
 
-  // ----------------- MONITORING -----------------
+  // ----------------- STRICT MONITORING -----------------
   const enableMonitoring = () => {
     if (monitoringRef.current) return;
     monitoringRef.current = true;
@@ -320,11 +319,8 @@ export default function StudentQuizPage() {
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
-
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
-
-    document.addEventListener('touchstart', onTouchStart as any, { passive: false });
 
     applyBodyStyles();
   };
@@ -338,157 +334,142 @@ export default function StudentQuizPage() {
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
-
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
-    document.removeEventListener('touchstart', onTouchStart as any);
   };
 
-  // Increment warning count + notify server (throttled)
-  const sendFlag = async (reason: string) => {
+  // Send flag and update warning count (local + server)
+  const sendFlag = async (reason: string): Promise<number> => {
     const now = Date.now();
-    if (now - (lastWarnAtRef.current || 0) < 500) return;
+    if (now - (lastWarnAtRef.current || 0) < 500) {
+      return localWarningsRef.current;
+    }
     lastWarnAtRef.current = now;
 
+    // increment local first
     localWarningsRef.current = localWarningsRef.current + 1;
-    const count = localWarningsRef.current;
-    setWarningCount(count);
-
-    // Show warning toast
-    const remaining = Math.max(0, MAX_WARNINGS - count);
-    toast({
-      title: `Warning ${count} / ${MAX_WARNINGS}`,
-      description:
-        remaining > 0
-          ? `Violation detected (${reason}). ${remaining} warning(s) remaining before auto-submit.`
-          : `Violation detected (${reason}). Limit reached; quiz will be auto-submitted.`,
-      variant: remaining > 0 ? 'default' : 'destructive',
-    });
+    setWarningCount(localWarningsRef.current);
+    let count = localWarningsRef.current;
 
     try {
-      await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
+      const res = await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
+      if (typeof res.data.warningCount === 'number') {
+        count = res.data.warningCount;
+        localWarningsRef.current = count;
+        setWarningCount(count);
+      }
     } catch (err) {
       console.warn('Flag send failed:', err);
     }
+
+    return count;
   };
 
-  // ----------------- EVENT HANDLERS -----------------
-  const onVisibilityChange = () => {
+  // Handle any violation (tab switch, minimize, copy, etc.)
+  const handleViolation = (reason: string, withGraceTimer: boolean) => {
     if (!quizStarted || quizSubmitted) return;
 
-    if (document.visibilityState !== 'visible') {
-      // Tab hidden / minimized
-      sendFlag('visibility:hidden');
-      const count = localWarningsRef.current;
+    (async () => {
+      const count = await sendFlag(reason);
+
       if (count >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat('visibility:hidden:max-warnings');
-      } else {
-        startLeaveTimer('visibility:hidden');
+        await handleAutoSubmitAsCheat(`max-warnings:${reason}`);
+        return;
       }
+
+      const remaining = MAX_WARNINGS - count;
+
+      if (withGraceTimer) {
+        scheduleAutoSubmit(reason);
+        toast({
+          title: 'Focus lost / fullscreen exited',
+          description: `Warning ${count}/${MAX_WARNINGS}. Return to fullscreen within ${GRACE_SECONDS} seconds or the quiz will auto-submit. Remaining warnings: ${remaining}.`,
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Violation detected',
+          description: `Warning ${count}/${MAX_WARNINGS}. Remaining warnings: ${remaining}.`,
+          variant: 'default',
+        });
+      }
+    })();
+  };
+
+  // Event handlers
+
+  // Visibility change: tab hidden / minimized / switched
+  const onVisibilityChange = () => {
+    if (document.hidden || document.visibilityState !== 'visible') {
+      handleViolation('visibility:hidden', true);
     } else {
-      // Back to visible
-      clearLeaveTimer();
+      // back to visible -> cancel pending auto-submit
+      clearAutoSubmitTimer();
     }
   };
 
   const onWindowBlur = () => {
-    if (!quizStarted || quizSubmitted) return;
-
-    sendFlag('window:blur');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('window:blur:max-warnings');
-    } else {
-      startLeaveTimer('window:blur');
-    }
+    handleViolation('window:blur', true);
   };
 
   const onWindowFocus = () => {
-    if (!quizStarted || quizSubmitted) return;
-    clearLeaveTimer();
+    clearAutoSubmitTimer();
   };
 
   const onFullscreenChange = () => {
-    if (!quizStarted || quizSubmitted) return;
-
     const isFs = !!document.fullscreenElement;
     if (!isFs) {
-      // Exited fullscreen
-      sendFlag('fullscreen:exited');
-      const count = localWarningsRef.current;
-      if (count >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat('fullscreen:exited:max-warnings');
-      } else {
-        startLeaveTimer('fullscreen:exited');
-      }
+      handleViolation('fullscreen:exited', true);
     } else {
-      // Back to fullscreen
-      clearLeaveTimer();
+      clearAutoSubmitTimer();
     }
   };
 
   const onCopyAttempt = (e: ClipboardEvent) => {
-    if (!quizStarted || quizSubmitted) return;
-    e.preventDefault();
-    sendFlag('clipboard:copy');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('clipboard:copy:max-warnings');
+    if (quizStarted && !quizSubmitted) {
+      handleViolation('clipboard:copy', false);
     }
   };
 
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (quizStarted && !quizSubmitted) {
-      sendFlag('attempt:beforeunload');
-      handleAutoSubmitAsCheat('attempt:beforeunload');
+      handleViolation('attempt:beforeunload', true);
       e.preventDefault();
       e.returnValue = '';
     }
   };
 
   const onContextMenu = (e: Event) => {
-    if (!quizStarted || quizSubmitted) return;
     e.preventDefault();
-    sendFlag('contextmenu:block');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('contextmenu:block:max-warnings');
+    if (quizStarted && !quizSubmitted) {
+      handleViolation('contextmenu', false);
     }
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (!quizStarted || quizSubmitted) return;
-
     const key = e.key?.toLowerCase();
     const ctrl = e.ctrlKey || e.metaKey;
     const shift = e.shiftKey;
 
-    let reason: string | null = null;
-
     if (key === 'f12') {
-      reason = 'key:f12';
-    } else if (ctrl && shift && ['i', 'c', 'j'].includes(key)) {
-      reason = `key:ctrl-shift-${key}`;
-    } else if (ctrl && key === 'u') {
-      reason = 'key:ctrl-u';
-    } else if (ctrl && key === 's') {
-      reason = 'key:ctrl-s';
-    }
-
-    if (reason) {
       e.preventDefault();
-      sendFlag(reason);
-      const count = localWarningsRef.current;
-      if (count >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat(`${reason}:max-warnings`);
-      }
+      handleViolation('key:f12', false);
     }
-  };
 
-  const onTouchStart = (e: TouchEvent) => {
-    if (!quizStarted || quizSubmitted) return;
-    // Best-effort to suppress touch context menu
-    e.preventDefault();
+    if (ctrl && shift && (key === 'i' || key === 'c' || key === 'j')) {
+      e.preventDefault();
+      handleViolation(`key:ctrl-shift-${key}`, false);
+    }
+
+    if (ctrl && key === 'u') {
+      e.preventDefault();
+      handleViolation('key:ctrl-u', false);
+    }
+
+    if (ctrl && key === 's') {
+      e.preventDefault();
+      handleViolation('key:ctrl-s', false);
+    }
   };
 
   // ----------------- BODY STYLE HELPERS -----------------
@@ -496,11 +477,9 @@ export default function StudentQuizPage() {
     try {
       const body = document.body;
       if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
-      if (!body.dataset.prevWebkitTouchCallout) body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
 
       body.style.userSelect = 'none';
-      (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
     } catch {
       // ignore
@@ -510,14 +489,13 @@ export default function StudentQuizPage() {
   const restoreBodyStyles = () => {
     try {
       const body = document.body;
-      if (body.dataset.prevUserSelect !== undefined) body.style.userSelect = body.dataset.prevUserSelect;
-      if (body.dataset.prevWebkitTouchCallout !== undefined) {
-        (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
+      if (body.dataset.prevUserSelect !== undefined) {
+        body.style.userSelect = body.dataset.prevUserSelect;
       }
-      if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
-
+      if (body.dataset.prevTouchAction !== undefined) {
+        body.style.touchAction = body.dataset.prevTouchAction;
+      }
       delete body.dataset.prevUserSelect;
-      delete body.dataset.prevWebkitTouchCallout;
       delete body.dataset.prevTouchAction;
     } catch {
       // ignore
@@ -531,7 +509,7 @@ export default function StudentQuizPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // ----------------- UI -----------------
+  // UI: loading
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -540,6 +518,7 @@ export default function StudentQuizPage() {
     );
   }
 
+  // UI: blocked / submitted
   if (quizSubmitted) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -553,7 +532,7 @@ export default function StudentQuizPage() {
             <CardTitle>{isCheated ? 'Quiz Blocked' : 'Quiz Submitted'}</CardTitle>
             <CardDescription>
               {isCheated
-                ? 'Your quiz was blocked due to repeated violations. Contact the instructor if this is in error.'
+                ? 'Your quiz was auto-submitted due to repeated violations. Contact your instructor if this was a mistake.'
                 : 'Thank you — your quiz has been submitted.'}
             </CardDescription>
           </CardHeader>
@@ -562,7 +541,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Info form
+  // UI: info form before starting
   if (showInfoForm && quiz) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -620,7 +599,7 @@ export default function StudentQuizPage() {
                 <Select value={studentSemester} onValueChange={setStudentSemester}>
                   <SelectTrigger><SelectValue placeholder="Sem" /></SelectTrigger>
                   <SelectContent>
-                    {[1,2,3,4,5,6,7,8].map((s) => (
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
                       <SelectItem key={s} value={s.toString()}>{s}</SelectItem>
                     ))}
                   </SelectContent>
@@ -630,8 +609,8 @@ export default function StudentQuizPage() {
 
             <div>
               <p className="text-sm text-muted-foreground">
-                Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen, you get a warning.
-                After 3 warnings, the quiz is blocked and auto-submitted. If you stay away for more than 10 seconds, it will also auto-submit.
+                Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen, you&apos;ll get a warning and have {GRACE_SECONDS} seconds to return.
+                After {MAX_WARNINGS} warnings, the quiz will be auto-submitted.
               </p>
             </div>
 
@@ -644,7 +623,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Active quiz
+  // UI: active quiz
   if (quizStarted && quiz?.questions) {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
@@ -662,7 +641,9 @@ export default function StudentQuizPage() {
               </div>
               <div className="flex items-center gap-2 text-lg font-semibold">
                 <Clock className={`h-5 w-5 ${timeLeft < 300 ? 'text-destructive' : 'text-primary'}`} />
-                <span className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}>{formatTime(timeLeft)}</span>
+                <span className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}>
+                  {formatTime(timeLeft)}
+                </span>
                 {showFullscreenButton && (
                   <Button
                     size="sm"
@@ -672,7 +653,7 @@ export default function StudentQuizPage() {
                       if (!ok) {
                         toast({
                           title: 'Fullscreen blocked',
-                          description: 'Please allow fullscreen via the browser UI or settings.',
+                          description: 'Please enable fullscreen using your browser controls.',
                         });
                       }
                     }}
@@ -736,7 +717,11 @@ export default function StudentQuizPage() {
                     {submitting ? <> <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting... </> : 'Submit Quiz'}
                   </Button>
                 ) : (
-                  <Button onClick={() => setCurrentQuestion(Math.min(quiz.questions.length - 1, currentQuestion + 1))}>
+                  <Button
+                    onClick={() =>
+                      setCurrentQuestion(Math.min(quiz.questions.length - 1, currentQuestion + 1))
+                    }
+                  >
                     Next
                   </Button>
                 )}
@@ -751,7 +736,13 @@ export default function StudentQuizPage() {
                 {quiz.questions.map((_, idx) => (
                   <Button
                     key={idx}
-                    variant={currentQuestion === idx ? 'default' : answers[idx] ? 'secondary' : 'outline'}
+                    variant={
+                      currentQuestion === idx
+                        ? 'default'
+                        : answers[idx]
+                        ? 'secondary'
+                        : 'outline'
+                    }
                     size="sm"
                     onClick={() => setCurrentQuestion(idx)}
                     className="w-full aspect-square"
@@ -767,7 +758,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Fallback not found
+  // fallback not found
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="max-w-md w-full">
