@@ -7,10 +7,17 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { bookmarksAPI, foldersAPI, quizAPI, studentsAPI } from '@/services/api';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { StudentTable } from '@/components/StudentTable';
+// ❌ removed StudentTable import
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
 export default function BookmarksPage() {
@@ -23,6 +30,8 @@ export default function BookmarksPage() {
   const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [selectedQuizForShare, setSelectedQuizForShare] = useState<any>(null);
+
+  // selection state
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [students, setStudents] = useState<any[]>([]);
 
@@ -35,7 +44,7 @@ export default function BookmarksPage() {
       const [bookmarksData, foldersData, studentsData] = await Promise.all([
         bookmarksAPI.getAll(),
         foldersAPI.getAll(),
-        studentsAPI.getAll()
+        studentsAPI.getAll(),
       ]);
       setBookmarks(bookmarksData || []);
       setFolders(foldersData || []);
@@ -51,7 +60,7 @@ export default function BookmarksPage() {
   const handleDeleteBookmark = async (id: string) => {
     try {
       await bookmarksAPI.delete(id);
-      setBookmarks(bookmarks.filter(b => b._id !== id));
+      setBookmarks(bookmarks.filter((b) => b._id !== id));
       toast.success('Bookmark removed');
     } catch (error) {
       console.error('Error deleting bookmark:', error);
@@ -90,7 +99,7 @@ export default function BookmarksPage() {
     if (!selectedQuizForShare) return;
 
     try {
-      // First save the quiz if it's from bookmarks
+      // Save the quiz (in case it's only in bookmarks)
       const savedQuiz = await quizAPI.save({
         title: selectedQuizForShare.quiz.title,
         description: selectedQuizForShare.quiz.description,
@@ -99,18 +108,21 @@ export default function BookmarksPage() {
         questionType: selectedQuizForShare.quiz.questionType,
         duration: selectedQuizForShare.quiz.duration,
         difficulty: selectedQuizForShare.quiz.difficulty,
-        folderId: selectedQuizForShare.folderId
+        folderId: selectedQuizForShare.folderId,
       } as any);
 
-      // Share the quiz
-      const studentEmails = selectedStudents.length > 0 
-        ? students.filter(s => selectedStudents.includes(s.id)).map(s => s.email)
-        : students.map(s => s.email);
+      // Use selected students if any, otherwise all
+      const studentEmails =
+        selectedStudents.length > 0
+          ? students
+              .filter((s) => selectedStudents.includes(s.id)) // or s._id if your API uses _id
+              .map((s) => s.email)
+          : students.map((s) => s.email);
 
       const result = await quizAPI.share({
         quizId: savedQuiz.quizId,
         studentEmails,
-        links: []
+        links: [],
       });
 
       toast.success(`Quiz shared with ${result.links?.length || 0} students`);
@@ -125,7 +137,22 @@ export default function BookmarksPage() {
 
   const openShareDialog = (bookmark: any) => {
     setSelectedQuizForShare(bookmark);
+    setSelectedStudents([]); // reset selection when opening
     setShareDialogOpen(true);
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudents((prev) =>
+      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId],
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedStudents.length === students.length) {
+      setSelectedStudents([]);
+    } else {
+      setSelectedStudents(students.map((s) => s.id)); // or s._id
+    }
   };
 
   if (loading) {
@@ -138,8 +165,8 @@ export default function BookmarksPage() {
     );
   }
 
-  const quizBookmarks = bookmarks.filter(b => b.type === 'quiz');
-  const filteredBookmarks = quizBookmarks.filter(b => {
+  const quizBookmarks = bookmarks.filter((b) => b.type === 'quiz');
+  const filteredBookmarks = quizBookmarks.filter((b) => {
     if (filterType === 'all') return true;
     return b.quiz?.difficulty === filterType;
   });
@@ -243,138 +270,225 @@ export default function BookmarksPage() {
         </Card>
       ) : (
         <Accordion type="multiple" className="space-y-4">
-          {Object.entries(bookmarksByFolder).map(([folderId, folderBookmarks]: [string, any]) => {
-            const folder = folders.find(f => f._id === folderId);
-            const folderName = folder?.name || 'Uncategorized';
-            
-            return (
-              <AccordionItem key={folderId} value={folderId} className="border rounded-lg">
-                <AccordionTrigger className="px-4 hover:no-underline">
-                  <div className="flex items-center gap-2">
-                    <Folder className="h-5 w-5 text-primary" />
-                    <span className="font-semibold">{folderName}</span>
-                    <Badge variant="secondary">{folderBookmarks.length}</Badge>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pt-4">
-                  <div className="grid grid-cols-1 gap-4">
-                    {folderBookmarks.map((bookmark: any) => (
-                      <Card key={bookmark._id} className="shadow-card">
-                        <CardHeader>
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-1 flex-1">
-                              <CardTitle className="text-base md:text-lg">
-                                {bookmark.quiz?.title || 'Untitled Quiz'}
-                              </CardTitle>
-                              <p className="text-xs md:text-sm text-muted-foreground">
-                                {bookmark.quiz?.description || 'No description'}
-                              </p>
-                              <div className="flex flex-wrap gap-2 mt-2">
-                                <Badge variant="outline">
-                                  {bookmark.quiz?.numQuestions || 0} Questions
-                                </Badge>
-                                <Badge variant="outline">
-                                  {bookmark.quiz?.difficulty || 'medium'}
-                                </Badge>
-                                <Badge variant="outline">
-                                  {bookmark.quiz?.duration || 30} mins
-                                </Badge>
+          {Object.entries(bookmarksByFolder).map(
+            ([folderId, folderBookmarks]: [string, any]) => {
+              const folder = folders.find((f) => f._id === folderId);
+              const folderName = folder?.name || 'Uncategorized';
+
+              return (
+                <AccordionItem key={folderId} value={folderId} className="border rounded-lg">
+                  <AccordionTrigger className="px-4 hover:no-underline">
+                    <div className="flex items-center gap-2">
+                      <Folder className="h-5 w-5 text-primary" />
+                      <span className="font-semibold">{folderName}</span>
+                      <Badge variant="secondary">{folderBookmarks.length}</Badge>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-4 pt-4">
+                    <div className="grid grid-cols-1 gap-4">
+                      {folderBookmarks.map((bookmark: any) => (
+                        <Card key={bookmark._id} className="shadow-card">
+                          <CardHeader>
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1 flex-1">
+                                <CardTitle className="text-base md:text-lg">
+                                  {bookmark.quiz?.title || 'Untitled Quiz'}
+                                </CardTitle>
+                                <p className="text-xs md:text-sm text-muted-foreground">
+                                  {bookmark.quiz?.description || 'No description'}
+                                </p>
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                  <Badge variant="outline">
+                                    {bookmark.quiz?.numQuestions || 0} Questions
+                                  </Badge>
+                                  <Badge variant="outline">
+                                    {bookmark.quiz?.difficulty || 'medium'}
+                                  </Badge>
+                                  <Badge variant="outline">
+                                    {bookmark.quiz?.duration || 30} mins
+                                  </Badge>
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openShareDialog(bookmark)}
+                                >
+                                  <Share2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleEditInQuiz(bookmark)}
+                                >
+                                  <FileEdit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleDeleteBookmark(bookmark._id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openShareDialog(bookmark)}
-                              >
-                                <Share2 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleEditInQuiz(bookmark)}
-                              >
-                                <FileEdit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => handleDeleteBookmark(bookmark._id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent>
-                          <Accordion type="single" collapsible>
-                            <AccordionItem value="questions">
-                              <AccordionTrigger className="text-sm">
-                                View All Questions ({bookmark.quiz?.questions?.length || 0})
-                              </AccordionTrigger>
-                              <AccordionContent>
-                                <div className="space-y-3">
-                                  {bookmark.quiz?.questions?.map((q: any, idx: number) => (
-                                    <Card key={q.id || idx} className="p-3">
-                                      <div className="space-y-2">
-                                        <div className="flex items-start justify-between gap-2">
-                                          <p className="text-sm font-medium flex-1">
-                                            {idx + 1}. {q.question}
-                                          </p>
-                                          <Badge variant="secondary" className="text-xs">
-                                            {q.type}
-                                          </Badge>
-                                        </div>
-                                        {q.options && q.options.length > 0 && (
-                                          <div className="space-y-1 pl-4">
-                                            {q.options.map((opt: string, i: number) => (
-                                              <p key={i} className="text-xs text-muted-foreground">
-                                                {String.fromCharCode(65 + i)}. {opt}
+                          </CardHeader>
+                          <CardContent>
+                            <Accordion type="single" collapsible>
+                              <AccordionItem value="questions">
+                                <AccordionTrigger className="text-sm">
+                                  View All Questions (
+                                  {bookmark.quiz?.questions?.length || 0})
+                                </AccordionTrigger>
+                                <AccordionContent>
+                                  <div className="space-y-3">
+                                    {bookmark.quiz?.questions?.map(
+                                      (q: any, idx: number) => (
+                                        <Card key={q.id || idx} className="p-3">
+                                          <div className="space-y-2">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <p className="text-sm font-medium flex-1">
+                                                {idx + 1}. {q.question}
                                               </p>
-                                            ))}
+                                              <Badge variant="secondary" className="text-xs">
+                                                {q.type}
+                                              </Badge>
+                                            </div>
+                                            {q.options && q.options.length > 0 && (
+                                              <div className="space-y-1 pl-4">
+                                                {q.options.map(
+                                                  (opt: string, i: number) => (
+                                                    <p
+                                                      key={i}
+                                                      className="text-xs text-muted-foreground"
+                                                    >
+                                                      {String.fromCharCode(
+                                                        65 + i,
+                                                      )}
+                                                      . {opt}
+                                                    </p>
+                                                  ),
+                                                )}
+                                              </div>
+                                            )}
+                                            {q.explanation && (
+                                              <p className="text-xs text-muted-foreground italic pl-4">
+                                                💡 {q.explanation}
+                                              </p>
+                                            )}
                                           </div>
-                                        )}
-                                        {q.explanation && (
-                                          <p className="text-xs text-muted-foreground italic pl-4">
-                                            💡 {q.explanation}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </Card>
-                                  ))}
-                                </div>
-                              </AccordionContent>
-                            </AccordionItem>
-                          </Accordion>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            );
-          })}
+                                        </Card>
+                                      ),
+                                    )}
+                                  </div>
+                                </AccordionContent>
+                              </AccordionItem>
+                            </Accordion>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              );
+            },
+          )}
         </Accordion>
       )}
 
+      {/* SHARE DIALOG WITH CHECKBOX TABLE */}
       <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Share Quiz with Students</DialogTitle>
             <DialogDescription>
-              Select students to share "{selectedQuizForShare?.quiz?.title}" with
+              Select students to share "
+              {selectedQuizForShare?.quiz?.title || 'this quiz'}" with.
+              <br />
+              If you don't select anyone, it will be shared with <b>all students</b>.
             </DialogDescription>
           </DialogHeader>
-          <StudentTable
-            students={students}
-            selectedStudents={selectedStudents}
-            onSelectionChange={setSelectedStudents}
-          />
+
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              Selected: {selectedStudents.length} / {students.length}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleSelectAll}
+              disabled={students.length === 0}
+            >
+              {selectedStudents.length === students.length ? 'Clear Selection' : 'Select All'}
+            </Button>
+          </div>
+
+          {/* Simple table with checkboxes */}
+          <div className="border rounded-md overflow-hidden">
+            <div className="max-h-80 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left w-10">
+                      {/* header checkbox toggles all */}
+                      <input
+                        type="checkbox"
+                        checked={
+                          students.length > 0 &&
+                          selectedStudents.length === students.length
+                        }
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">Email</th>
+                    <th className="px-3 py-2 text-left">USN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {students.map((student) => {
+                    const id = student.id; // or student._id
+                    const isSelected = selectedStudents.includes(id);
+                    return (
+                      <tr
+                        key={id}
+                        className={isSelected ? 'bg-primary/5' : 'hover:bg-muted/60'}
+                      >
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleStudentSelection(id)}
+                          />
+                        </td>
+                        <td className="px-3 py-2">{student.name}</td>
+                        <td className="px-3 py-2">{student.email}</td>
+                        <td className="px-3 py-2">{student.usn}</td>
+                      </tr>
+                    );
+                  })}
+
+                  {students.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-3 py-6 text-center text-muted-foreground"
+                      >
+                        No students found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div className="flex gap-2 justify-end mt-4">
             <Button variant="outline" onClick={() => setShareDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleShareQuiz}>
+            <Button onClick={handleShareQuiz} disabled={students.length === 0}>
               <Share2 className="h-4 w-4 mr-2" />
               Share Quiz
             </Button>
