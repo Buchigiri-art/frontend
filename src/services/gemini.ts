@@ -66,7 +66,7 @@ Return ONLY a valid JSON array with this exact structure:
 
 Generate the questions now:`;
 
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-pro'];
+  const modelsToTry = ['gemini-2.5-flash'];
   const maxRetries = 3;
 
   for (const modelName of modelsToTry) {
