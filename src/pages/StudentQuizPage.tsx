@@ -17,7 +17,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3; // 3 warnings, then auto-submit as cheat
 const LEAVE_TIMEOUT_MS = 10000; // 10 seconds to come back before auto-submit
 
-// Detect mobile – used to relax some events on phones
+// Detect mobile – used to adjust behavior
 const isMobile =
   typeof navigator !== 'undefined' &&
   /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -349,7 +349,7 @@ export default function StudentQuizPage() {
     monitoringRef.current = true;
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
-    window.addEventListener('blur', onWindowBlur, true);
+    // window.addEventListener('blur', onWindowBlur, true); // REMOVED
     window.addEventListener('focus', onWindowFocus, true);
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
@@ -366,7 +366,7 @@ export default function StudentQuizPage() {
     monitoringRef.current = false;
 
     document.removeEventListener('visibilitychange', onVisibilityChange, true);
-    window.removeEventListener('blur', onWindowBlur, true);
+    // window.removeEventListener('blur', onWindowBlur, true); // REMOVED
     window.removeEventListener('focus', onWindowFocus, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
@@ -444,31 +444,8 @@ export default function StudentQuizPage() {
     }, 300);
   };
 
-  // Debounced blur to avoid warnings on simple clicks
-  const onWindowBlur = () => {
-    if (!guard()) return;
-
-    // On mobile, blur can happen for lots of harmless things (keyboard, UI),
-    // so we ignore blur warnings completely there.
-    if (isMobile) return;
-
-    const blurTime = Date.now();
-    setTimeout(() => {
-      if (!guard()) return;
-
-      const now = Date.now();
-      // Ignore quick blurs (< 200ms) – usually caused by clicking buttons/inputs
-      if (now - blurTime < 200) return;
-
-      sendFlag('window:blur');
-      const count = localWarningsRef.current;
-      if (count >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat('window:blur:max-warnings');
-      } else {
-        startLeaveTimer('window:blur');
-      }
-    }, 250);
-  };
+  // NOTE: onWindowBlur REMOVED COMPLETELY to avoid false warnings on desktop
+  // const onWindowBlur = () => { ... }
 
   const onWindowFocus = () => {
     if (!guard()) return;
@@ -565,7 +542,7 @@ export default function StudentQuizPage() {
       (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
 
-      // 🚨 Lock page scroll, but textarea scroll still works (it has its own scroll context)
+      // Lock page scroll; textarea scroll still works (it has its own scroll context)
       body.style.overflow = 'hidden';
     } catch {
       // ignore
