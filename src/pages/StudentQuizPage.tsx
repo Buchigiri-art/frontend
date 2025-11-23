@@ -354,7 +354,6 @@ export default function StudentQuizPage() {
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
-    window.addEventListener('pagehide', onPageHide, true); // NEW: pagehide
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
@@ -372,7 +371,6 @@ export default function StudentQuizPage() {
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
-    window.removeEventListener('pagehide', onPageHide, true); // NEW: pagehide
 
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
@@ -411,10 +409,23 @@ export default function StudentQuizPage() {
     return true;
   };
 
+  // Debounced visibility change to avoid flicker warnings
   const onVisibilityChange = () => {
     if (!guard()) return;
 
-    if (document.visibilityState !== 'visible') {
+    if (document.visibilityState === 'visible') {
+      clearLeaveTimer();
+      return;
+    }
+
+    // Small delay to ignore quick flickers
+    const firedAt = Date.now();
+    setTimeout(() => {
+      // If quiz ended or became visible again → ignore
+      if (!guard()) return;
+      if (document.visibilityState === 'visible') return;
+      if (Date.now() - firedAt < 250) return;
+
       // MOBILE: any leave (including Gemini, app switch) = instant cheat
       if (isMobile) {
         sendFlag('visibility:hidden:mobile');
@@ -422,7 +433,7 @@ export default function StudentQuizPage() {
         return;
       }
 
-      // DESKTOP: existing warning + timeout logic
+      // DESKTOP: warning + timeout logic
       sendFlag('visibility:hidden');
       const count = localWarningsRef.current;
       if (count >= MAX_WARNINGS) {
@@ -430,11 +441,10 @@ export default function StudentQuizPage() {
       } else {
         startLeaveTimer('visibility:hidden');
       }
-    } else {
-      clearLeaveTimer();
-    }
+    }, 300);
   };
 
+  // Debounced blur to avoid warnings on simple clicks
   const onWindowBlur = () => {
     if (!guard()) return;
 
@@ -442,13 +452,22 @@ export default function StudentQuizPage() {
     // so we ignore blur warnings completely there.
     if (isMobile) return;
 
-    sendFlag('window:blur');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('window:blur:max-warnings');
-    } else {
-      startLeaveTimer('window:blur');
-    }
+    const blurTime = Date.now();
+    setTimeout(() => {
+      if (!guard()) return;
+
+      const now = Date.now();
+      // Ignore quick blurs (< 200ms) – usually caused by clicking buttons/inputs
+      if (now - blurTime < 200) return;
+
+      sendFlag('window:blur');
+      const count = localWarningsRef.current;
+      if (count >= MAX_WARNINGS) {
+        handleAutoSubmitAsCheat('window:blur:max-warnings');
+      } else {
+        startLeaveTimer('window:blur');
+      }
+    }, 250);
   };
 
   const onWindowFocus = () => {
@@ -489,13 +508,6 @@ export default function StudentQuizPage() {
     handleAutoSubmitAsCheat('attempt:beforeunload');
     e.preventDefault();
     e.returnValue = '';
-  };
-
-  // NEW: pagehide → auto-submit (covers navigation / app closing / some assistant flows)
-  const onPageHide = (e: PageTransitionEvent | Event) => {
-    if (!guard()) return;
-    sendFlag('pagehide');
-    handleAutoSubmitAsCheat('pagehide');
   };
 
   const onContextMenu = (e: Event) => {
@@ -553,7 +565,7 @@ export default function StudentQuizPage() {
       (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
 
-      // 🚨 Lock page scroll, but textarea scroll still works
+      // 🚨 Lock page scroll, but textarea scroll still works (it has its own scroll context)
       body.style.overflow = 'hidden';
     } catch {
       // ignore

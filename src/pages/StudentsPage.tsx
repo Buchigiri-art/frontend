@@ -1,12 +1,33 @@
 import { useState, useEffect } from 'react';
-import { Upload, Download, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Upload,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+
 import { StudentTable } from '@/components/StudentTable';
 import { parseExcelFile, generateSampleExcel } from '@/services/excelService';
 import { studentsAPI } from '@/services/api';
-import { Student } from '@/types';
+import type { Student } from '@/types';
 import { toast } from 'sonner';
 
 export default function StudentsPage() {
@@ -15,6 +36,29 @@ export default function StudentsPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // edit dialog state
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    name: string;
+    usn: string;
+    email: string;
+    branch: string;
+    year: string;
+    semester: string;
+  }>({
+    name: '',
+    usn: '',
+    email: '',
+    branch: '',
+    year: '',
+    semester: '',
+  });
+
+  // helper to get an id for API calls
+  const getStudentId = (student: Student): string =>
+    (student as any)._id || (student as any).id || student.email;
 
   useEffect(() => {
     const fetchStudents = async () => {
@@ -50,13 +94,15 @@ export default function StudentsPage() {
 
       // Upload to backend
       await studentsAPI.upload(result.students);
-      
+
       // Refresh student list
       const updatedStudents = await studentsAPI.getAll();
       setStudents(updatedStudents);
       setSuccess(true);
-      toast.success(`Successfully uploaded ${result.students.length} student records`);
-      
+      toast.success(
+        `Successfully uploaded ${result.students.length} student records`
+      );
+
       // Clear file input
       e.target.value = '';
     } catch (error) {
@@ -65,6 +111,91 @@ export default function StudentsPage() {
       setErrors([error instanceof Error ? error.message : 'Upload failed']);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // ---- EDIT LOGIC ----
+
+  const openEditDialog = (student: Student) => {
+    setEditingStudent(student);
+    setEditForm({
+      name: student.name ?? '',
+      usn: student.usn ?? '',
+      email: student.email ?? '',
+      branch: student.branch ?? '',
+      year: student.year != null ? String(student.year) : '',
+      semester: student.semester != null ? String(student.semester) : '',
+    });
+  };
+
+  const closeEditDialog = () => {
+    setEditingStudent(null);
+    setSavingEdit(false);
+  };
+
+  const handleEditInputChange = (
+    field: keyof typeof editForm,
+    value: string
+  ) => {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingStudent) return;
+    setSavingEdit(true);
+
+    try {
+      const id = getStudentId(editingStudent);
+
+      // Build a full Student object, merging old + new values
+      const updatedStudent: Student = {
+        ...editingStudent,
+        name: editForm.name.trim(),
+        usn: editForm.usn.trim(),
+        email: editForm.email.trim(),
+        branch: editForm.branch.trim(),
+        year: editForm.year
+          ? Number(editForm.year)
+          : (editingStudent.year as any),
+        semester: editForm.semester
+          ? Number(editForm.semester)
+          : (editingStudent.semester as any),
+      };
+
+      await studentsAPI.update(id, updatedStudent);
+
+      // update local state
+      setStudents((prev) =>
+        prev.map((s) =>
+          getStudentId(s) === id ? updatedStudent : s
+        )
+      );
+
+      toast.success('Student updated successfully');
+      closeEditDialog();
+    } catch (error) {
+      console.error('Error updating student:', error);
+      toast.error('Failed to update student');
+      setSavingEdit(false);
+    }
+  };
+
+  // ---- DELETE LOGIC ----
+
+  const handleDeleteStudent = async (student: Student) => {
+    const id = getStudentId(student);
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete ${student.name || student.email}?`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await studentsAPI.delete(id);
+      setStudents((prev) => prev.filter((s) => getStudentId(s) !== id));
+      toast.success('Student deleted successfully');
+    } catch (error) {
+      console.error('Error deleting student:', error);
+      toast.error('Failed to delete student');
     }
   };
 
@@ -108,7 +239,9 @@ export default function StudentsPage() {
                 <p className="font-semibold mb-1">Validation Errors:</p>
                 <ul className="list-disc list-inside space-y-1">
                   {errors.map((error, i) => (
-                    <li key={i} className="text-sm">{error}</li>
+                    <li key={i} className="text-sm">
+                      {error}
+                    </li>
                   ))}
                 </ul>
               </AlertDescription>
@@ -194,15 +327,111 @@ export default function StudentsPage() {
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle>Student Records</CardTitle>
-            <CardDescription>
-              Total: {students.length} students
-            </CardDescription>
+            <CardDescription>Total: {students.length} students</CardDescription>
           </CardHeader>
           <CardContent>
-            <StudentTable students={students} />
+            <StudentTable
+              students={students}
+              enableActions
+              onEditStudent={openEditDialog}
+              onDeleteStudent={handleDeleteStudent}
+            />
           </CardContent>
         </Card>
       )}
+
+      {/* Edit Student Dialog */}
+      <Dialog
+        open={!!editingStudent}
+        onOpenChange={(open) => {
+          if (!open) closeEditDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Student</DialogTitle>
+            <DialogDescription>
+              Update the student details and save your changes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 mt-4">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Name</label>
+              <Input
+                value={editForm.name}
+                onChange={(e) =>
+                  handleEditInputChange('name', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">USN</label>
+              <Input
+                value={editForm.usn}
+                onChange={(e) =>
+                  handleEditInputChange('usn', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Email</label>
+              <Input
+                value={editForm.email}
+                onChange={(e) =>
+                  handleEditInputChange('email', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Branch</label>
+              <Input
+                value={editForm.branch}
+                onChange={(e) =>
+                  handleEditInputChange('branch', e.target.value)
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Year</label>
+                <Input
+                  value={editForm.year}
+                  onChange={(e) =>
+                    handleEditInputChange('year', e.target.value)
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Semester</label>
+                <Input
+                  value={editForm.semester}
+                  onChange={(e) =>
+                    handleEditInputChange('semester', e.target.value)
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={closeEditDialog}
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEdit}
+              disabled={savingEdit}
+              type="button"
+            >
+              {savingEdit ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

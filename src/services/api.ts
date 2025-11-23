@@ -67,6 +67,12 @@ export const studentsAPI = {
     const response = await api.delete(`/students/${studentId}`);
     return response.data;
   },
+
+  // ✅ NEW: update student
+  update: async (studentId: string, data: Partial<Student>): Promise<Student> => {
+    const response = await api.put(`/students/${studentId}`, data);
+    return response.data;
+  },
 };
 
 // Folders API
