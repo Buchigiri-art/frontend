@@ -151,16 +151,25 @@ export default function StudentQuizPage() {
       setWarningCount(data.warningCount || 0);
       localWarningsRef.current = data.warningCount || 0;
 
+      // 🔹 Prefill ALL student info from backend (and lock those fields in UI)
+      const info = data.studentInfo || {};
+      setStudentName(info.name || '');
+      setStudentUSN(info.usn || '');
+      setStudentBranch(info.branch || '');
+      setStudentYear(info.year || '');
+      setStudentSemester(info.semester || '');
+
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
         setAnswers(new Array(data.quiz.questions.length).fill(''));
         setTimeLeft((data.quiz.duration || 30) * 60);
-        setStudentName(data.studentInfo.name);
-        setStudentUSN(data.studentInfo.usn);
 
+        // Already started quiz, go directly into quiz
         setQuizStarted(true); // triggers monitoring via useEffect
         applyBodyStyles();
+        setShowInfoForm(false);
       } else {
+        // Not started yet → show info dialog with LOCKED details
         setShowInfoForm(true);
       }
       setLoading(false);
@@ -177,10 +186,11 @@ export default function StudentQuizPage() {
 
   // ----------------- START / SUBMIT -----------------
   const handleStartQuiz = async () => {
+    // Still keep basic validation in case backend missed something
     if (!studentName.trim() || !studentUSN.trim() || !studentBranch || !studentYear || !studentSemester) {
       toast({
         title: 'Missing Information',
-        description: 'Please fill in all required fields',
+        description: 'Your details are incomplete. Please contact your teacher.',
         variant: 'destructive',
       });
       return;
@@ -213,7 +223,8 @@ export default function StudentQuizPage() {
 
       toast({
         title: 'Quiz Started',
-        description: 'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3).',
+        description:
+          'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3).',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -289,7 +300,8 @@ export default function StudentQuizPage() {
 
     toast({
       title: 'Quiz Blocked',
-      description: 'Repeated or severe violations detected. The quiz has been auto-submitted as cheated.',
+      description:
+        'Repeated or severe violations detected. The quiz has been auto-submitted as cheated.',
       variant: 'destructive',
     });
   };
@@ -409,7 +421,6 @@ export default function StudentQuizPage() {
     return true;
   };
 
-  // Debounced visibility change to avoid flicker warnings
   const onVisibilityChange = () => {
     if (!guard()) return;
 
@@ -418,22 +429,18 @@ export default function StudentQuizPage() {
       return;
     }
 
-    // Small delay to ignore quick flickers
     const firedAt = Date.now();
     setTimeout(() => {
-      // If quiz ended or became visible again → ignore
       if (!guard()) return;
       if (document.visibilityState === 'visible') return;
       if (Date.now() - firedAt < 250) return;
 
-      // MOBILE: any leave (including Gemini, app switch) = instant cheat
       if (isMobile) {
         sendFlag('visibility:hidden:mobile');
         handleAutoSubmitAsCheat('visibility:hidden:mobile-immediate');
         return;
       }
 
-      // DESKTOP: warning + timeout logic
       sendFlag('visibility:hidden');
       const count = localWarningsRef.current;
       if (count >= MAX_WARNINGS) {
@@ -443,9 +450,6 @@ export default function StudentQuizPage() {
       }
     }, 300);
   };
-
-  // NOTE: onWindowBlur REMOVED COMPLETELY to avoid false warnings on desktop
-  // const onWindowBlur = () => { ... }
 
   const onWindowFocus = () => {
     if (!guard()) return;
@@ -537,12 +541,9 @@ export default function StudentQuizPage() {
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
       if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
-      // Lock page interactions
       body.style.userSelect = 'none';
       (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
-
-      // Lock page scroll; textarea scroll still works (it has its own scroll context)
       body.style.overflow = 'hidden';
     } catch {
       // ignore
@@ -613,7 +614,9 @@ export default function StudentQuizPage() {
         <Card className="max-w-md w-full">
           <CardHeader>
             <CardTitle>{quiz.title}</CardTitle>
-            <CardDescription>{quiz.description || 'Enter details to start the quiz'}</CardDescription>
+            <CardDescription>
+              {quiz.description || 'Confirm your details to start the quiz'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -623,6 +626,8 @@ export default function StudentQuizPage() {
                 value={studentName}
                 onChange={(e) => setStudentName(e.target.value)}
                 placeholder="Full name"
+                disabled
+                className="bg-muted"
               />
             </div>
 
@@ -633,6 +638,8 @@ export default function StudentQuizPage() {
                 value={studentUSN}
                 onChange={(e) => setStudentUSN(e.target.value.toUpperCase())}
                 placeholder="USN"
+                disabled
+                className="bg-muted"
               />
             </div>
 
@@ -643,8 +650,12 @@ export default function StudentQuizPage() {
 
             <div className="space-y-2">
               <Label htmlFor="branch">Branch *</Label>
-              <Select value={studentBranch} onValueChange={setStudentBranch}>
-                <SelectTrigger>
+              <Select
+                value={studentBranch}
+                onValueChange={setStudentBranch}
+                disabled
+              >
+                <SelectTrigger className="bg-muted">
                   <SelectValue placeholder="Select branch" />
                 </SelectTrigger>
                 <SelectContent>
@@ -661,8 +672,12 @@ export default function StudentQuizPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Year *</Label>
-                <Select value={studentYear} onValueChange={setStudentYear}>
-                  <SelectTrigger>
+                <Select
+                  value={studentYear}
+                  onValueChange={setStudentYear}
+                  disabled
+                >
+                  <SelectTrigger className="bg-muted">
                     <SelectValue placeholder="Year" />
                   </SelectTrigger>
                   <SelectContent>
@@ -675,8 +690,12 @@ export default function StudentQuizPage() {
               </div>
               <div>
                 <Label>Semester *</Label>
-                <Select value={studentSemester} onValueChange={setStudentSemester}>
-                  <SelectTrigger>
+                <Select
+                  value={studentSemester}
+                  onValueChange={setStudentSemester}
+                  disabled
+                >
+                  <SelectTrigger className="bg-muted">
                     <SelectValue placeholder="Sem" />
                   </SelectTrigger>
                   <SelectContent>
@@ -692,6 +711,7 @@ export default function StudentQuizPage() {
 
             <div>
               <p className="text-sm text-muted-foreground">
+                Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen, you get a warning.
                 After 3 warnings, the quiz is blocked and auto-submitted. On mobile, if you leave the quiz
                 screen (including using system assistants like Gemini) it may be auto-submitted immediately.
@@ -735,8 +755,14 @@ export default function StudentQuizPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2 text-lg font-semibold">
-                <Clock className={`h-5 w-5 ${timeLeft < 300 ? 'text-destructive' : 'text-primary'}`} />
-                <span className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}>
+                <Clock
+                  className={`h-5 w-5 ${
+                    timeLeft < 300 ? 'text-destructive' : 'text-primary'
+                  }`}
+                />
+                <span
+                  className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}
+                >
                   {formatTime(timeLeft)}
                 </span>
                 {showFullscreenButton && (
@@ -748,7 +774,8 @@ export default function StudentQuizPage() {
                       if (!ok) {
                         toast({
                           title: 'Fullscreen blocked',
-                          description: 'Please allow fullscreen via the browser UI or settings.',
+                          description:
+                            'Please allow fullscreen via the browser UI or settings.',
                         });
                       }
                     }}
