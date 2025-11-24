@@ -37,10 +37,29 @@ export default function StudentsPage() {
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // edit dialog state
+  // ---- EDIT DIALOG STATE ----
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editForm, setEditForm] = useState<{
+    name: string;
+    usn: string;
+    email: string;
+    branch: string;
+    year: string;
+    semester: string;
+  }>({
+    name: '',
+    usn: '',
+    email: '',
+    branch: '',
+    year: '',
+    semester: '',
+  });
+
+  // ---- CREATE (ADD) DIALOG STATE ----
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [savingAdd, setSavingAdd] = useState(false);
+  const [addForm, setAddForm] = useState<{
     name: string;
     usn: string;
     email: string;
@@ -75,6 +94,7 @@ export default function StudentsPage() {
     fetchStudents();
   }, []);
 
+  // ---- FILE UPLOAD LOGIC ----
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -115,7 +135,6 @@ export default function StudentsPage() {
   };
 
   // ---- EDIT LOGIC ----
-
   const openEditDialog = (student: Student) => {
     setEditingStudent(student);
     setEditForm({
@@ -147,27 +166,25 @@ export default function StudentsPage() {
     try {
       const id = getStudentId(editingStudent);
 
-      // Build a full Student object, merging old + new values
       const updatedStudent: Student = {
         ...editingStudent,
         name: editForm.name.trim(),
         usn: editForm.usn.trim(),
         email: editForm.email.trim(),
         branch: editForm.branch.trim(),
-        year: editForm.year
-          ? Number(editForm.year)
-          : (editingStudent.year as any),
+        // your schema has year/semester as String, but this keeps compatibility
+        year: editForm.year ? (editForm.year as any) : (editingStudent as any).year,
         semester: editForm.semester
-          ? Number(editForm.semester)
-          : (editingStudent.semester as any),
+          ? (editForm.semester as any)
+          : (editingStudent as any).semester,
       };
 
-      await studentsAPI.update(id, updatedStudent);
+      const res = await studentsAPI.update(id, updatedStudent);
 
-      // update local state
+      // update local state with data from server (in case hooks/middleware modified it)
       setStudents((prev) =>
         prev.map((s) =>
-          getStudentId(s) === id ? updatedStudent : s
+          getStudentId(s) === id ? res : s
         )
       );
 
@@ -180,8 +197,64 @@ export default function StudentsPage() {
     }
   };
 
-  // ---- DELETE LOGIC ----
+  // ---- ADD / INSERT LOGIC ----
+  const openAddDialog = () => {
+    setAddForm({
+      name: '',
+      usn: '',
+      email: '',
+      branch: '',
+      year: '',
+      semester: '',
+    });
+    setAddDialogOpen(true);
+  };
 
+  const closeAddDialog = () => {
+    setAddDialogOpen(false);
+    setSavingAdd(false);
+  };
+
+  const handleAddInputChange = (
+    field: keyof typeof addForm,
+    value: string
+  ) => {
+    setAddForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleCreateStudent = async () => {
+    // simple required field validation
+    if (!addForm.name.trim() || !addForm.usn.trim() || !addForm.email.trim()) {
+      toast.error('Name, USN and Email are required');
+      return;
+    }
+
+    setSavingAdd(true);
+
+    try {
+      const payload = {
+        name: addForm.name.trim(),
+        usn: addForm.usn.trim(),
+        email: addForm.email.trim(),
+        branch: addForm.branch.trim(),
+        year: addForm.year.trim(),
+        semester: addForm.semester.trim(),
+      };
+
+      // backend returns the created student document
+      const created = await studentsAPI.create(payload);
+
+      setStudents((prev) => [...prev, created]);
+      toast.success('Student created successfully');
+      closeAddDialog();
+    } catch (error) {
+      console.error('Error creating student:', error);
+      toast.error('Failed to create student');
+      setSavingAdd(false);
+    }
+  };
+
+  // ---- DELETE LOGIC ----
   const handleDeleteStudent = async (student: Student) => {
     const id = getStudentId(student);
     const confirmDelete = window.confirm(
@@ -219,7 +292,7 @@ export default function StudentsPage() {
         </p>
       </div>
 
-      {/* Upload Section */}
+      {/* Upload + Manual Insert Section */}
       <Card className="shadow-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -228,6 +301,7 @@ export default function StudentsPage() {
           </CardTitle>
           <CardDescription>
             Upload an Excel file (.xlsx or .csv) containing student information
+            or insert students manually.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -318,6 +392,15 @@ export default function StudentsPage() {
               <Download className="h-4 w-4 mr-2" />
               Download Sample
             </Button>
+
+            {/* NEW: Manual Insert Button */}
+            <Button
+              variant="secondary"
+              onClick={openAddDialog}
+              className="flex-1 sm:flex-initial"
+            >
+              + Add Student Manually
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -325,9 +408,14 @@ export default function StudentsPage() {
       {/* Student Table */}
       {students.length > 0 && (
         <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle>Student Records</CardTitle>
-            <CardDescription>Total: {students.length} students</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
+            <div>
+              <CardTitle>Student Records</CardTitle>
+              <CardDescription>Total: {students.length} students</CardDescription>
+            </div>
+            <Button size="sm" onClick={openAddDialog}>
+              + Add Student
+            </Button>
           </CardHeader>
           <CardContent>
             <StudentTable
@@ -428,6 +516,99 @@ export default function StudentsPage() {
               type="button"
             >
               {savingEdit ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add / Insert Student Dialog */}
+      <Dialog
+        open={addDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeAddDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Student</DialogTitle>
+            <DialogDescription>
+              Fill in the student details and save to insert manually.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 mt-4">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Name *</label>
+              <Input
+                value={addForm.name}
+                onChange={(e) =>
+                  handleAddInputChange('name', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">USN *</label>
+              <Input
+                value={addForm.usn}
+                onChange={(e) =>
+                  handleAddInputChange('usn', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Email *</label>
+              <Input
+                value={addForm.email}
+                onChange={(e) =>
+                  handleAddInputChange('email', e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Branch</label>
+              <Input
+                value={addForm.branch}
+                onChange={(e) =>
+                  handleAddInputChange('branch', e.target.value)
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Year</label>
+                <Input
+                  value={addForm.year}
+                  onChange={(e) =>
+                    handleAddInputChange('year', e.target.value)
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Semester</label>
+                <Input
+                  value={addForm.semester}
+                  onChange={(e) =>
+                    handleAddInputChange('semester', e.target.value)
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={closeAddDialog}
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateStudent}
+              disabled={savingAdd}
+              type="button"
+            >
+              {savingAdd ? 'Saving...' : 'Save student'}
             </Button>
           </DialogFooter>
         </DialogContent>

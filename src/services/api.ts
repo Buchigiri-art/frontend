@@ -77,6 +77,10 @@ export const studentsAPI = {
     const response = await api.get('/students/all');
     return response.data;
   },
+ create: async (data: Partial<Student>): Promise<Student> => {
+    const response = await api.post('/students', data);
+    return response.data;
+  },
 
   delete: async (studentId: string): Promise<{ success: boolean }> => {
     const response = await api.delete(`/students/${studentId}`);
