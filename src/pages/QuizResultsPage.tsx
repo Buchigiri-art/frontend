@@ -93,6 +93,9 @@ interface AttemptDetail {
   questions: AttemptQuestion[];
 }
 
+// Helper to show A/B/C/D labels
+const optionLabel = (index: number) => String.fromCharCode(65 + index); // 0 -> A, 1 -> B, ...
+
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const navigate = useNavigate();
@@ -533,48 +536,74 @@ export default function QuizResultsPage() {
                       <CardContent className="space-y-2">
                         {/* MCQ view */}
                         {q.type === 'mcq' && q.options && q.options.length > 0 ? (
-                          q.options.map((option, idx) => {
-                            const isSelected = idx === q.selectedOptionIndex;
-                            const isCorrectOption = idx === q.correctOptionIndex;
+                          <>
+                            {/* Summary badges just below question */}
+                            <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                              <span className="rounded-full bg-muted px-2 py-1">
+                                <span className="font-semibold">Selected:</span>{' '}
+                                {q.selectedOptionIndex >= 0
+                                  ? `${optionLabel(q.selectedOptionIndex)}. ${
+                                      q.options[q.selectedOptionIndex]
+                                    }`
+                                  : 'No answer'}
+                              </span>
+                              <span className="rounded-full bg-muted px-2 py-1">
+                                <span className="font-semibold">Correct:</span>{' '}
+                                {q.correctOptionIndex >= 0
+                                  ? `${optionLabel(q.correctOptionIndex)}. ${
+                                      q.options[q.correctOptionIndex]
+                                    }`
+                                  : '-'}
+                              </span>
+                            </div>
 
-                            let optionClass =
-                              'flex items-start gap-2 rounded-md border px-3 py-2 text-sm';
+                            {/* Options list */}
+                            {q.options.map((option, idx) => {
+                              const isSelected = idx === q.selectedOptionIndex;
+                              const isCorrectOption = idx === q.correctOptionIndex;
 
-                            if (isCorrectOption) {
-                              optionClass +=
-                                ' border-green-500 bg-green-100/80 font-medium';
-                            } else if (isSelected && !isCorrectOption) {
-                              optionClass +=
-                                ' border-red-500 bg-red-100/80 font-medium';
-                            } else {
-                              optionClass += ' border-muted bg-background';
-                            }
+                              let optionClass =
+                                'flex items-start gap-2 rounded-md border px-3 py-2 text-sm';
 
-                            return (
-                              <div key={idx} className={optionClass}>
-                                <span className="mt-0.5">
-                                  {isCorrectOption ? (
-                                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                                  ) : isSelected ? (
-                                    <XCircle className="h-4 w-4 text-red-600" />
-                                  ) : (
-                                    <Circle className="h-4 w-4 text-muted-foreground" />
+                              if (isCorrectOption) {
+                                optionClass +=
+                                  ' border-green-500 bg-green-100/80 font-medium';
+                              } else if (isSelected && !isCorrectOption) {
+                                optionClass +=
+                                  ' border-red-500 bg-red-100/80 font-medium';
+                              } else {
+                                optionClass += ' border-muted bg-background';
+                              }
+
+                              return (
+                                <div key={idx} className={optionClass}>
+                                  <span className="mt-0.5">
+                                    {isCorrectOption ? (
+                                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                    ) : isSelected ? (
+                                      <XCircle className="h-4 w-4 text-red-600" />
+                                    ) : (
+                                      <Circle className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                  </span>
+                                  <span className="font-semibold mr-1">
+                                    {optionLabel(idx)}.
+                                  </span>
+                                  <span>{option}</span>
+                                  {isSelected && (
+                                    <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      Selected
+                                    </span>
                                   )}
-                                </span>
-                                <span>{option}</span>
-                                {isSelected && (
-                                  <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                                    Selected
-                                  </span>
-                                )}
-                                {isCorrectOption && (
-                                  <span className="ml-2 rounded-full bg-green-600/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
-                                    Correct
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })
+                                  {isCorrectOption && (
+                                    <span className="ml-2 rounded-full bg-green-600/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                                      Correct
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </>
                         ) : (
                           // Short-answer view
                           <div className="space-y-2 text-sm">
@@ -589,7 +618,13 @@ export default function QuizResultsPage() {
                               <p className="text-xs font-semibold mb-1">
                                 Student Answer
                               </p>
-                              <p>{q.studentAnswer || <span className="italic text-muted-foreground">No answer</span>}</p>
+                              <p>
+                                {q.studentAnswer || (
+                                  <span className="italic text-muted-foreground">
+                                    No answer
+                                  </span>
+                                )}
+                              </p>
                             </div>
                             <div className="rounded-md border px-3 py-2 border-muted bg-background">
                               <p className="text-xs font-semibold mb-1">
