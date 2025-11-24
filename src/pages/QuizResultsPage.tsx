@@ -30,7 +30,6 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
-  Circle,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
 import axios from 'axios';
@@ -69,9 +68,6 @@ interface AttemptQuestion {
   isCorrect: boolean;
   marks: number;
   explanation?: string;
-  // we won't trust backend indexes, we'll compute them ourselves
-  selectedOptionIndex?: number;
-  correctOptionIndex?: number;
 }
 
 interface AttemptDetail {
@@ -94,12 +90,11 @@ interface AttemptDetail {
   questions: AttemptQuestion[];
 }
 
-// Helper to show A/B/C/D labels
-const optionLabel = (index: number) => String.fromCharCode(65 + index); // 0 -> A, 1 -> B, ...
+// A -> 0, B -> 1 etc
+const optionLabel = (index: number) => String.fromCharCode(65 + index);
 
-// Simple normalizer so matching works even with small differences in spacing/case
-const normalize = (value?: string) =>
-  (value ?? '').toString().trim().toLowerCase();
+// normalize strings for comparison
+const normalize = (v?: string) => (v ?? '').trim().toLowerCase();
 
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
@@ -111,7 +106,6 @@ export default function QuizResultsPage() {
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // Detail dialog state
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(
@@ -142,14 +136,9 @@ export default function QuizResultsPage() {
     fetchResults();
   }, [fetchResults]);
 
-  // Auto-refresh every 10 seconds if enabled
   useEffect(() => {
     if (!autoRefresh) return;
-
-    const interval = setInterval(() => {
-      fetchResults();
-    }, 10000);
-
+    const interval = setInterval(() => fetchResults(), 10000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchResults]);
 
@@ -174,7 +163,6 @@ export default function QuizResultsPage() {
         }
       );
 
-      // Create download link
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -204,18 +192,16 @@ export default function QuizResultsPage() {
 
   const calculateStats = () => {
     if (attempts.length === 0) return null;
-
-    const avgPercentage =
+    const avg =
       attempts.reduce((sum, a) => sum + a.percentage, 0) / attempts.length;
     const passCount = attempts.filter((a) => a.percentage >= 40).length;
-    const highestScore = Math.max(...attempts.map((a) => a.totalMarks));
-    const lowestScore = Math.min(...attempts.map((a) => a.totalMarks));
-
+    const highest = Math.max(...attempts.map((a) => a.totalMarks));
+    const lowest = Math.min(...attempts.map((a) => a.totalMarks));
     return {
-      avgPercentage: avgPercentage.toFixed(2),
+      avgPercentage: avg.toFixed(2),
       passRate: ((passCount / attempts.length) * 100).toFixed(1),
-      highestScore,
-      lowestScore,
+      highestScore: highest,
+      lowestScore: lowest,
     };
   };
 
@@ -223,7 +209,6 @@ export default function QuizResultsPage() {
 
   const openAttemptDetail = async (attempt: QuizAttempt) => {
     if (!quizId) return;
-
     setSelectedAttempt(attempt);
     setDetailOpen(true);
     setDetailLoading(true);
@@ -233,8 +218,8 @@ export default function QuizResultsPage() {
       const data = await quizAPI.getAttemptDetail(quizId, attempt._id);
       const detail: AttemptDetail = data.attempt;
       setAttemptDetail(detail);
-    } catch (error: any) {
-      console.error('Error fetching attempt detail:', error);
+    } catch (err: any) {
+      console.error('Error fetching attempt detail:', err);
       toast({
         title: 'Error',
         description: 'Failed to load student answers',
@@ -277,7 +262,7 @@ export default function QuizResultsPage() {
 
           <div className="flex gap-2">
             <Button
-              onClick={() => setAutoRefresh(!autoRefresh)}
+              onClick={() => setAutoRefresh((v) => !v)}
               variant={autoRefresh ? 'default' : 'outline'}
               size="sm"
             >
@@ -313,7 +298,7 @@ export default function QuizResultsPage() {
           </div>
         </div>
 
-        {/* Statistics */}
+        {/* Stats */}
         {stats && (
           <div className="grid gap-4 md:grid-cols-4">
             <Card>
@@ -361,7 +346,7 @@ export default function QuizResultsPage() {
           </div>
         )}
 
-        {/* Results Table */}
+        {/* Results table */}
         <Card>
           <CardHeader>
             <CardTitle>Student Results</CardTitle>
@@ -448,7 +433,7 @@ export default function QuizResultsPage() {
         </Card>
       </div>
 
-      {/* Attempt Detail Dialog */}
+      {/* Detail dialog */}
       <Dialog
         open={detailOpen}
         onOpenChange={(open) => {
@@ -507,18 +492,21 @@ export default function QuizResultsPage() {
                 {attemptDetail.questions.map((q, index) => {
                   const options = q.options || [];
 
-                  // Compute which option was selected & which is correct
                   const selectedIdx = options.findIndex(
                     (opt) => normalize(opt) === normalize(q.studentAnswer)
                   );
                   const correctIdx = options.findIndex(
                     (opt) => normalize(opt) === normalize(q.correctAnswer)
                   );
-
                   const isMcq = q.type === 'mcq' && options.length > 0;
-                  const isCorrect = isMcq
-                    ? selectedIdx >= 0 && selectedIdx === correctIdx
-                    : q.isCorrect;
+
+                  // ✅ use backend isCorrect OR computed equality
+                  const isCorrect =
+                    q.isCorrect ||
+                    (isMcq &&
+                      selectedIdx >= 0 &&
+                      correctIdx >= 0 &&
+                      selectedIdx === correctIdx);
 
                   const selectedLabel =
                     selectedIdx >= 0
@@ -568,10 +556,9 @@ export default function QuizResultsPage() {
                       </CardHeader>
 
                       <CardContent className="space-y-2">
-                        {/* MCQ view */}
                         {isMcq ? (
                           <>
-                            {/* Summary badges just below question */}
+                            {/* Summary row */}
                             <div className="mb-3 flex flex-wrap gap-2 text-xs">
                               <span className="rounded-full bg-muted px-2 py-1">
                                 <span className="font-semibold">Selected:</span>{' '}
@@ -583,13 +570,13 @@ export default function QuizResultsPage() {
                               </span>
                             </div>
 
-                            {/* Options list with circles */}
+                            {/* Options with circle indicator */}
                             {options.map((option, idx) => {
                               const isSelected = idx === selectedIdx;
                               const isCorrectOption = idx === correctIdx;
 
                               let optionClass =
-                                'flex items-start gap-2 rounded-md border px-3 py-2 text-sm';
+                                'flex items-center gap-3 rounded-md border px-3 py-2 text-sm';
 
                               if (isCorrectOption) {
                                 optionClass +=
@@ -601,17 +588,20 @@ export default function QuizResultsPage() {
                                 optionClass += ' border-muted bg-background';
                               }
 
+                              // Circle style
+                              let circleClass =
+                                'h-4 w-4 rounded-full border flex items-center justify-center';
+                              if (isCorrectOption) {
+                                circleClass += ' border-green-600 bg-green-600';
+                              } else if (isSelected) {
+                                circleClass += ' border-red-600 bg-red-600';
+                              } else {
+                                circleClass += ' border-muted-foreground';
+                              }
+
                               return (
                                 <div key={idx} className={optionClass}>
-                                  <span className="mt-0.5">
-                                    {isCorrectOption ? (
-                                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                                    ) : isSelected ? (
-                                      <XCircle className="h-4 w-4 text-red-600" />
-                                    ) : (
-                                      <Circle className="h-4 w-4 text-muted-foreground" />
-                                    )}
-                                  </span>
+                                  <span className={circleClass} />
                                   <span className="font-semibold mr-1">
                                     {optionLabel(idx)}.
                                   </span>
@@ -631,7 +621,7 @@ export default function QuizResultsPage() {
                             })}
                           </>
                         ) : (
-                          // Short-answer view
+                          // short-answer
                           <div className="space-y-2 text-sm">
                             <div
                               className={
