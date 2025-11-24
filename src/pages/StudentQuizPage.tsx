@@ -1,39 +1,20 @@
 // src/pages/StudentQuizPage.tsx
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/use-toast';
-import {
-  Loader2,
-  Clock,
-  CheckCircle2,
-  AlertCircle,
-  Maximize2,
-} from 'lucide-react';
+import { Loader2, Clock, CheckCircle2, AlertCircle, Maximize2 } from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const MAX_WARNINGS = 3; // 3 warnings, then auto-submit as cheat
-const LEAVE_TIMEOUT_MS = 10000; // 10 seconds to come back before auto-submit
+const MAX_WARNINGS = 3;
+const LEAVE_TIMEOUT_MS = 10000;
 
 // Detect mobile – used to adjust behavior
 const isMobile =
@@ -63,7 +44,7 @@ export default function StudentQuizPage() {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [email, setEmail] = useState('');
 
-  // Student info form (locked details)
+  // Student info (all locked / read-only)
   const [showInfoForm, setShowInfoForm] = useState(false);
   const [studentName, setStudentName] = useState('');
   const [studentUSN, setStudentUSN] = useState('');
@@ -82,18 +63,16 @@ export default function StudentQuizPage() {
 
   // Anti-cheat / monitoring
   const [warningCount, setWarningCount] = useState(0);
-  const [isCheated, setIsCheated] = useState(false);
+  const [isCheated, setIsCheeted] = useState(false);
   const localWarningsRef = useRef<number>(0);
   const lastWarnAtRef = useRef<number>(0);
   const tokenRef = useRef<string | undefined>(token);
   const monitoringRef = useRef<boolean>(false);
-  const leaveTimeoutRef = useRef<number | null>(null); // for 10s leave timer
+  const leaveTimeoutRef = useRef<number | null>(null);
 
-  // Refs so event handlers see live state
   const quizActiveRef = useRef<boolean>(false);
   const quizSubmittedRef = useRef<boolean>(false);
 
-  // AttemptId ref for async auto-submit
   const attemptIdRef = useRef<string>('');
   attemptIdRef.current = attemptId;
 
@@ -102,7 +81,6 @@ export default function StudentQuizPage() {
     tokenRef.current = token;
     fetchQuizData();
     return () => {
-      // global cleanup if component unmounts
       quizActiveRef.current = false;
       quizSubmittedRef.current = false;
       removeMonitoringListeners();
@@ -169,7 +147,7 @@ export default function StudentQuizPage() {
       setWarningCount(data.warningCount || 0);
       localWarningsRef.current = data.warningCount || 0;
 
-      // Prefill ALL student info from backend (and lock those fields in UI)
+      // Prefill ALL student info from backend (locked in UI)
       const info = data.studentInfo || {};
       setStudentName(info.name || '');
       setStudentUSN(info.usn || '');
@@ -182,12 +160,10 @@ export default function StudentQuizPage() {
         setAnswers(new Array(data.quiz.questions.length).fill(''));
         setTimeLeft((data.quiz.duration || 30) * 60);
 
-        // Already started quiz, go directly into quiz
-        setQuizStarted(true); // triggers monitoring via useEffect
+        setQuizStarted(true);
         applyBodyStyles();
         setShowInfoForm(false);
       } else {
-        // Not started yet → show info dialog with LOCKED details
         setShowInfoForm(true);
       }
       setLoading(false);
@@ -204,7 +180,7 @@ export default function StudentQuizPage() {
 
   // ----------------- START / SUBMIT -----------------
   const handleStartQuiz = async () => {
-    // Still keep basic validation in case backend missed something
+    // Just in case backend didn’t send details
     if (
       !studentName.trim() ||
       !studentUSN.trim() ||
@@ -214,7 +190,8 @@ export default function StudentQuizPage() {
     ) {
       toast({
         title: 'Missing Information',
-        description: 'Your details are incomplete. Please contact your teacher.',
+        description:
+          'Your details are incomplete. Please contact your instructor to update your record.',
         variant: 'destructive',
       });
       return;
@@ -239,10 +216,8 @@ export default function StudentQuizPage() {
 
       applyBodyStyles();
 
-      // Try fullscreen (may be blocked)
       await tryEnterFullscreen(3, 300);
 
-      // Now mark quiz started -> monitoring useEffect will attach listeners
       setQuizStarted(true);
 
       toast({
@@ -295,14 +270,12 @@ export default function StudentQuizPage() {
     }
   };
 
-  const handleAutoSubmitAsCheat = async (
-    reason = 'violation:auto-submit',
-  ) => {
+  const handleAutoSubmitAsCheat = async (reason = 'violation:auto-submit') => {
     if (quizSubmittedRef.current) return;
 
     quizActiveRef.current = false;
     quizSubmittedRef.current = true;
-    setIsCheated(true);
+    setIsCheeted(true);
     setQuizSubmitted(true);
 
     try {
@@ -339,10 +312,7 @@ export default function StudentQuizPage() {
   };
 
   // ----------------- FULLSCREEN HELPERS -----------------
-  const tryEnterFullscreen = async (
-    retries = 3,
-    delayMs = 300,
-  ): Promise<boolean> => {
+  const tryEnterFullscreen = async (retries = 3, delayMs = 300): Promise<boolean> => {
     const attemptFS = async (): Promise<boolean> => {
       try {
         if (document.fullscreenElement) return true;
@@ -562,15 +532,11 @@ export default function StudentQuizPage() {
     try {
       const body = document.body;
 
-      if (!body.dataset.prevUserSelect)
-        body.dataset.prevUserSelect = body.style.userSelect || '';
+      if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
       if (!body.dataset.prevWebkitTouchCallout)
-        (body.dataset as any).prevWebkitTouchCallout =
-          (body.style as any).webkitTouchCallout || '';
-      if (!body.dataset.prevTouchAction)
-        body.dataset.prevTouchAction = body.style.touchAction || '';
-      if (!body.dataset.prevOverflow)
-        body.dataset.prevOverflow = body.style.overflow || '';
+        body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
+      if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
+      if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
       body.style.userSelect = 'none';
       (body.style as any).webkitTouchCallout = 'none';
@@ -584,19 +550,15 @@ export default function StudentQuizPage() {
   const restoreBodyStyles = () => {
     try {
       const body = document.body;
-      if (body.dataset.prevUserSelect !== undefined)
-        body.style.userSelect = body.dataset.prevUserSelect;
-      if ((body.dataset as any).prevWebkitTouchCallout !== undefined) {
-        (body.style as any).webkitTouchCallout = (body.dataset as any)
-          .prevWebkitTouchCallout;
+      if (body.dataset.prevUserSelect !== undefined) body.style.userSelect = body.dataset.prevUserSelect;
+      if (body.dataset.prevWebkitTouchCallout !== undefined) {
+        (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
       }
-      if (body.dataset.prevTouchAction !== undefined)
-        body.style.touchAction = body.dataset.prevTouchAction;
-      if (body.dataset.prevOverflow !== undefined)
-        body.style.overflow = body.dataset.prevOverflow;
+      if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
+      if (body.dataset.prevOverflow !== undefined) body.style.overflow = body.dataset.prevOverflow;
 
       delete body.dataset.prevUserSelect;
-      delete (body.dataset as any).prevWebkitTouchCallout;
+      delete body.dataset.prevWebkitTouchCallout;
       delete body.dataset.prevTouchAction;
       delete body.dataset.prevOverflow;
     } catch {
@@ -604,7 +566,6 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ----------------- RENDER HELPERS -----------------
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -656,26 +617,12 @@ export default function StudentQuizPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">Full Name *</Label>
-              <Input
-                id="name"
-                value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                placeholder="Full name"
-                disabled
-                className="bg-muted"
-              />
+              <Input id="name" value={studentName} disabled className="bg-muted" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="usn">USN *</Label>
-              <Input
-                id="usn"
-                value={studentUSN}
-                onChange={(e) => setStudentUSN(e.target.value.toUpperCase())}
-                placeholder="USN"
-                disabled
-                className="bg-muted"
-              />
+              <Input id="usn" value={studentUSN} disabled className="bg-muted" />
             </div>
 
             <div className="space-y-2">
@@ -685,82 +632,35 @@ export default function StudentQuizPage() {
 
             <div className="space-y-2">
               <Label htmlFor="branch">Branch *</Label>
-              <Select
-                value={studentBranch}
-                onValueChange={setStudentBranch}
-                disabled
-              >
-                <SelectTrigger className="bg-muted">
-                  <SelectValue placeholder="Select branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CSE">CSE</SelectItem>
-                  <SelectItem value="ISE">ISE</SelectItem>
-                  <SelectItem value="ECE">ECE</SelectItem>
-                  <SelectItem value="EEE">EEE</SelectItem>
-                  <SelectItem value="ME">ME</SelectItem>
-                  <SelectItem value="CE">CE</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input id="branch" value={studentBranch} disabled className="bg-muted" />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Year *</Label>
-                <Select
-                  value={studentYear}
-                  onValueChange={setStudentYear}
-                  disabled
-                >
-                  <SelectTrigger className="bg-muted">
-                    <SelectValue placeholder="Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1</SelectItem>
-                    <SelectItem value="2">2</SelectItem>
-                    <SelectItem value="3">3</SelectItem>
-                    <SelectItem value="4">4</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="year">Year *</Label>
+                <Input id="year" value={studentYear} disabled className="bg-muted" />
               </div>
               <div>
-                <Label>Semester *</Label>
-                <Select
+                <Label htmlFor="semester">Semester *</Label>
+                <Input
+                  id="semester"
                   value={studentSemester}
-                  onValueChange={setStudentSemester}
                   disabled
-                >
-                  <SelectTrigger className="bg-muted">
-                    <SelectValue placeholder="Sem" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                      <SelectItem key={s} value={s.toString()}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  className="bg-muted"
+                />
               </div>
             </div>
 
             <div>
               <p className="text-sm text-muted-foreground">
-                Your details are provided by your instructor and cannot be changed
-                here.
-                <br />
-                Monitoring is enabled. If you minimize, switch tabs, or exit
-                fullscreen, you get a warning. After 3 warnings, the quiz is
-                blocked and auto-submitted. On mobile, leaving the quiz screen can
-                immediately auto-submit.
+                Your details are provided by your instructor and cannot be changed here.
+                Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen,
+                you get a warning. After 3 warnings, the quiz is blocked and auto-submitted.
+                On mobile, leaving the quiz screen can immediately auto-submit.
               </p>
             </div>
 
-            <Button
-              onClick={handleStartQuiz}
-              className="w-full"
-              disabled={loading}
-            >
+            <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...
@@ -801,11 +701,7 @@ export default function StudentQuizPage() {
                     timeLeft < 300 ? 'text-destructive' : 'text-primary'
                   }`}
                 />
-                <span
-                  className={
-                    timeLeft < 300 ? 'text-destructive' : 'text-foreground'
-                  }
-                >
+                <span className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}>
                   {formatTime(timeLeft)}
                 </span>
                 {showFullscreenButton && (
@@ -843,9 +739,7 @@ export default function StudentQuizPage() {
         <div className="max-w-4xl mx-auto px-4 py-8">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">
-                Question {currentQuestion + 1}
-              </CardTitle>
+              <CardTitle className="text-lg">Question {currentQuestion + 1}</CardTitle>
               <CardDescription className="text-base text-foreground pt-2">
                 {question.question}
               </CardDescription>
@@ -865,10 +759,7 @@ export default function StudentQuizPage() {
                         value={String.fromCharCode(65 + idx)}
                         id={`opt-${idx}`}
                       />
-                      <Label
-                        htmlFor={`opt-${idx}`}
-                        className="flex-1 cursor-pointer"
-                      >
+                      <Label htmlFor={`opt-${idx}`} className="flex-1 cursor-pointer">
                         <span className="font-semibold mr-2">
                           {String.fromCharCode(65 + idx)}.
                         </span>
@@ -892,9 +783,7 @@ export default function StudentQuizPage() {
               <div className="flex items-center justify-between pt-4 border-t">
                 <Button
                   variant="outline"
-                  onClick={() =>
-                    setCurrentQuestion(Math.max(0, currentQuestion - 1))
-                  }
+                  onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
                   disabled={currentQuestion === 0}
                 >
                   Previous
@@ -904,8 +793,7 @@ export default function StudentQuizPage() {
                   <Button onClick={handleSubmitQuiz} disabled={submitting}>
                     {submitting ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />{' '}
-                        Submitting...
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...
                       </>
                     ) : (
                       'Submit Quiz'
@@ -915,10 +803,7 @@ export default function StudentQuizPage() {
                   <Button
                     onClick={() =>
                       setCurrentQuestion(
-                        Math.min(
-                          quiz.questions.length - 1,
-                          currentQuestion + 1,
-                        ),
+                        Math.min(quiz.questions.length - 1, currentQuestion + 1)
                       )
                     }
                   >
@@ -966,9 +851,7 @@ export default function StudentQuizPage() {
       <Card className="max-w-md w-full">
         <CardHeader className="text-center">
           <CardTitle>Quiz Not Found</CardTitle>
-          <CardDescription>
-            The quiz link is invalid or has expired.
-          </CardDescription>
+          <CardDescription>The quiz link is invalid or has expired.</CardDescription>
         </CardHeader>
       </Card>
     </div>
