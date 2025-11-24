@@ -68,7 +68,6 @@ export default function ResultsPage() {
       setDeletingId(quizId);
       await quizAPI.delete(quizId);
 
-      // Remove from local state
       setQuizzes((prev) => prev.filter((q) => q._id !== quizId));
 
       toast.success('Quiz deleted successfully');

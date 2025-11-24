@@ -14,7 +14,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  // Critical for cookies (token) to be sent between Vercel & Render
+  // Important so cookies (token) are sent to backend
   withCredentials: true,
 });
 
@@ -25,7 +25,9 @@ export const quizAPI = {
     return response.data;
   },
 
-  share: async (shareData: QuizShare): Promise<{ success: boolean; message: string; links: QuizShare['links'] }> => {
+  share: async (
+    shareData: QuizShare
+  ): Promise<{ success: boolean; message: string; links: QuizShare['links'] }> => {
     const response = await api.post('/quiz/share', shareData);
     return response.data;
   },
@@ -35,23 +37,30 @@ export const quizAPI = {
     return response.data;
   },
 
-  delete: async (quizId: string): Promise<{ success: boolean }> => {
+  // 🔴 DELETE quiz + all its attempts (routes/quiz.js -> router.delete('/:id', ...))
+  delete: async (quizId: string): Promise<{ success: boolean; message?: string }> => {
     const response = await api.delete(`/quiz/${quizId}`);
     return response.data;
   },
 
+  // For the ResultsPage cards (stats per quiz)
   getAllWithStats: async (): Promise<any[]> => {
     const response = await api.get('/quiz/results/all');
     return response.data;
   },
 
-  getResults: async (quizId: string): Promise<{ quiz: any; attempts: any[] }> => {
+  // For main quiz results page (list of attempts)
+  getResults: async (quizId: string): Promise<{ success: boolean; quiz: any; attempts: any[] }> => {
     const response = await api.get(`/quiz/${quizId}/results`);
     return response.data;
   },
 
-  // ✅ NEW: get a single student's attempt with answers
-  getAttemptDetail: async (quizId: string, attemptId: string): Promise<any> => {
+  // 🟢 NEW: for student answer detail dialog
+  // Hits GET /api/quiz/:id/results/:attemptId
+  getAttemptDetail: async (
+    quizId: string,
+    attemptId: string
+  ): Promise<{ success: boolean; attempt: any }> => {
     const response = await api.get(`/quiz/${quizId}/results/${attemptId}`);
     return response.data;
   },
@@ -74,7 +83,6 @@ export const studentsAPI = {
     return response.data;
   },
 
-  // ✅ NEW: update student
   update: async (studentId: string, data: Partial<Student>): Promise<Student> => {
     const response = await api.put(`/students/${studentId}`, data);
     return response.data;
@@ -93,7 +101,10 @@ export const foldersAPI = {
     return response.data.folder;
   },
 
-  update: async (folderId: string, folderData: { name?: string; description?: string; color?: string }) => {
+  update: async (
+    folderId: string,
+    folderData: { name?: string; description?: string; color?: string }
+  ) => {
     const response = await api.put(`/folders/${folderId}`, folderData);
     return response.data.folder;
   },
