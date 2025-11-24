@@ -49,6 +49,12 @@ export const quizAPI = {
     const response = await api.get(`/quiz/${quizId}/results`);
     return response.data;
   },
+
+  // ✅ NEW: get a single student's attempt with answers
+  getAttemptDetail: async (quizId: string, attemptId: string): Promise<any> => {
+    const response = await api.get(`/quiz/${quizId}/results/${attemptId}`);
+    return response.data;
+  },
 };
 
 // Students API

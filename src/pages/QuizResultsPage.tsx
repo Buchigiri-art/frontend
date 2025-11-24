@@ -1,13 +1,46 @@
+// src/pages/QuizResultsPage.tsx
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { toast } from '@/components/ui/use-toast';
-import { Download, ArrowLeft, Loader2, FileSpreadsheet, Users, Award, TrendingUp, RefreshCw } from 'lucide-react';
+import {
+  Download,
+  ArrowLeft,
+  Loader2,
+  FileSpreadsheet,
+  Users,
+  Award,
+  TrendingUp,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  Circle,
+} from 'lucide-react';
 import { quizAPI } from '@/services/api';
 import axios from 'axios';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle as DialogTitleUI,
+  DialogDescription,
+} from '@/components/ui/dialog';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -26,14 +59,55 @@ interface QuizAttempt {
   submittedAt: string;
 }
 
+interface AttemptQuestion {
+  _id?: string;
+  questionText: string;
+  type: 'mcq' | 'short-answer';
+  options: string[];
+  studentAnswer: string;
+  correctAnswer: string;
+  isCorrect: boolean;
+  marks: number;
+  explanation?: string;
+  selectedOptionIndex: number; // -1 if not matched
+  correctOptionIndex: number;  // -1 if not matched
+}
+
+interface AttemptDetail {
+  _id: string;
+  quizId: string;
+  teacherId: string;
+  studentName: string;
+  studentUSN: string;
+  studentEmail: string;
+  studentBranch: string;
+  studentYear: string;
+  studentSemester: string;
+  totalMarks: number;
+  maxMarks: number;
+  percentage: number;
+  status: string;
+  submittedAt: string;
+  startedAt?: string;
+  gradedAt?: string;
+  questions: AttemptQuestion[];
+}
+
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const navigate = useNavigate();
+
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [quizTitle, setQuizTitle] = useState('');
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
+
+  // Detail dialog state
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(null);
+  const [attemptDetail, setAttemptDetail] = useState<AttemptDetail | null>(null);
 
   const fetchResults = useCallback(async () => {
     try {
@@ -76,7 +150,9 @@ export default function QuizResultsPage() {
         ?.split('=')[1];
 
       const response = await axios.get(
-        `${API_URL}/quiz/${quizId}/results/download${detailed ? '?detailed=true' : ''}`,
+        `${API_URL}/quiz/${quizId}/results/download${
+          detailed ? '?detailed=true' : ''
+        }`,
         {
           headers: {
             Cookie: `token=${token}`,
@@ -90,7 +166,10 @@ export default function QuizResultsPage() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `${quizTitle.replace(/[^a-z0-9]/gi, '_')}_results.xlsx`);
+      link.setAttribute(
+        'download',
+        `${quizTitle.replace(/[^a-z0-9]/gi, '_')}_results.xlsx`
+      );
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -114,7 +193,8 @@ export default function QuizResultsPage() {
   const calculateStats = () => {
     if (attempts.length === 0) return null;
 
-    const avgPercentage = attempts.reduce((sum, a) => sum + a.percentage, 0) / attempts.length;
+    const avgPercentage =
+      attempts.reduce((sum, a) => sum + a.percentage, 0) / attempts.length;
     const passCount = attempts.filter((a) => a.percentage >= 40).length;
     const highestScore = Math.max(...attempts.map((a) => a.totalMarks));
     const lowestScore = Math.min(...attempts.map((a) => a.totalMarks));
@@ -128,6 +208,31 @@ export default function QuizResultsPage() {
   };
 
   const stats = calculateStats();
+
+  const openAttemptDetail = async (attempt: QuizAttempt) => {
+    if (!quizId) return;
+
+    setSelectedAttempt(attempt);
+    setDetailOpen(true);
+    setDetailLoading(true);
+    setAttemptDetail(null);
+
+    try {
+      const data = await quizAPI.getAttemptDetail(quizId, attempt._id);
+      const detail: AttemptDetail = data.attempt;
+      setAttemptDetail(detail);
+    } catch (error: any) {
+      console.error('Error fetching attempt detail:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load student answers',
+        variant: 'destructive',
+      });
+      setDetailOpen(false);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -152,20 +257,27 @@ export default function QuizResultsPage() {
             <h1 className="text-3xl font-bold tracking-tight">Quiz Results</h1>
             <p className="text-lg text-muted-foreground">
               {quizTitle}
-              {autoRefresh && <span className="ml-2 text-xs">(Auto-refreshing every 10s)</span>}
+              {autoRefresh && (
+                <span className="ml-2 text-xs">(Auto-refreshing every 10s)</span>
+              )}
             </p>
           </div>
 
           <div className="flex gap-2">
             <Button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              variant={autoRefresh ? "default" : "outline"}
+              variant={autoRefresh ? 'default' : 'outline'}
               size="sm"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`}
+              />
               {autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'}
             </Button>
-            <Button onClick={() => handleDownloadExcel(false)} disabled={downloading || attempts.length === 0}>
+            <Button
+              onClick={() => handleDownloadExcel(false)}
+              disabled={downloading || attempts.length === 0}
+            >
               {downloading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -178,7 +290,11 @@ export default function QuizResultsPage() {
                 </>
               )}
             </Button>
-            <Button onClick={() => handleDownloadExcel(true)} disabled={downloading || attempts.length === 0} variant="outline">
+            <Button
+              onClick={() => handleDownloadExcel(true)}
+              disabled={downloading || attempts.length === 0}
+              variant="outline"
+            >
               <Download className="mr-2 h-4 w-4" />
               Detailed Report
             </Button>
@@ -238,7 +354,9 @@ export default function QuizResultsPage() {
           <CardHeader>
             <CardTitle>Student Results</CardTitle>
             <CardDescription>
-              {attempts.length > 0 ? `${attempts.length} student(s) attempted this quiz` : 'No attempts yet'}
+              {attempts.length > 0
+                ? `${attempts.length} student(s) attempted this quiz`
+                : 'No attempts yet'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -246,7 +364,9 @@ export default function QuizResultsPage() {
               <div className="text-center py-12">
                 <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-semibold mb-2">No Results Yet</h3>
-                <p className="text-muted-foreground">Students haven't attempted this quiz yet.</p>
+                <p className="text-muted-foreground">
+                  Students haven't attempted this quiz yet.
+                </p>
               </div>
             ) : (
               <div className="rounded-md border overflow-x-auto">
@@ -265,8 +385,14 @@ export default function QuizResultsPage() {
                   </TableHeader>
                   <TableBody>
                     {attempts.map((attempt) => (
-                      <TableRow key={attempt._id}>
-                        <TableCell className="font-medium">{attempt.studentName}</TableCell>
+                      <TableRow
+                        key={attempt._id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => openAttemptDetail(attempt)}
+                      >
+                        <TableCell className="font-medium">
+                          {attempt.studentName}
+                        </TableCell>
                         <TableCell>{attempt.studentUSN}</TableCell>
                         <TableCell>{attempt.studentBranch}</TableCell>
                         <TableCell>
@@ -276,17 +402,29 @@ export default function QuizResultsPage() {
                           {attempt.totalMarks}/{attempt.maxMarks}
                         </TableCell>
                         <TableCell>
-                          <span className={attempt.percentage >= 40 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                          <span
+                            className={
+                              attempt.percentage >= 40
+                                ? 'text-green-600 font-semibold'
+                                : 'text-red-600 font-semibold'
+                            }
+                          >
                             {attempt.percentage.toFixed(1)}%
                           </span>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={attempt.status === 'graded' ? 'default' : 'secondary'}>
+                          <Badge
+                            variant={
+                              attempt.status === 'graded' ? 'default' : 'secondary'
+                            }
+                          >
                             {attempt.status}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {new Date(attempt.submittedAt).toLocaleString()}
+                          {attempt.submittedAt
+                            ? new Date(attempt.submittedAt).toLocaleString()
+                            : '-'}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -297,6 +435,185 @@ export default function QuizResultsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Attempt Detail Dialog */}
+      <Dialog
+        open={detailOpen}
+        onOpenChange={(open) => {
+          setDetailOpen(open);
+          if (!open) {
+            setAttemptDetail(null);
+            setSelectedAttempt(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitleUI>Student Answers</DialogTitleUI>
+            <DialogDescription>
+              {selectedAttempt
+                ? `${selectedAttempt.studentName} • ${selectedAttempt.studentUSN}`
+                : 'View selected answers and correct options'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailLoading && (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          )}
+
+          {!detailLoading && attemptDetail && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted px-4 py-3 text-sm">
+                <div className="space-y-1">
+                  <p className="font-medium">{quizTitle}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Submitted:{' '}
+                    {attemptDetail.submittedAt
+                      ? new Date(attemptDetail.submittedAt).toLocaleString()
+                      : '-'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3 text-xs">
+                  <span className="font-semibold">
+                    Score: {attemptDetail.totalMarks}/{attemptDetail.maxMarks}
+                  </span>
+                  <span
+                    className={
+                      attemptDetail.percentage >= 40
+                        ? 'font-semibold text-green-600'
+                        : 'font-semibold text-red-600'
+                    }
+                  >
+                    {attemptDetail.percentage.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {attemptDetail.questions.map((q, index) => {
+                  const isCorrect = q.isCorrect;
+
+                  return (
+                    <Card
+                      key={q._id || index}
+                      className={
+                        isCorrect
+                          ? 'border-green-500/70 bg-green-50/60'
+                          : 'border-red-500/70 bg-red-50/50'
+                      }
+                    >
+                      <CardHeader className="pb-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <CardTitle className="text-sm font-semibold">
+                              Q{index + 1}. {q.questionText}
+                            </CardTitle>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Marks: {q.marks}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs font-semibold">
+                            {isCorrect ? (
+                              <>
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                <span className="text-green-700">Correct</span>
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="h-4 w-4 text-red-600" />
+                                <span className="text-red-700">Incorrect</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="space-y-2">
+                        {/* MCQ view */}
+                        {q.type === 'mcq' && q.options && q.options.length > 0 ? (
+                          q.options.map((option, idx) => {
+                            const isSelected = idx === q.selectedOptionIndex;
+                            const isCorrectOption = idx === q.correctOptionIndex;
+
+                            let optionClass =
+                              'flex items-start gap-2 rounded-md border px-3 py-2 text-sm';
+
+                            if (isCorrectOption) {
+                              optionClass +=
+                                ' border-green-500 bg-green-100/80 font-medium';
+                            } else if (isSelected && !isCorrectOption) {
+                              optionClass +=
+                                ' border-red-500 bg-red-100/80 font-medium';
+                            } else {
+                              optionClass += ' border-muted bg-background';
+                            }
+
+                            return (
+                              <div key={idx} className={optionClass}>
+                                <span className="mt-0.5">
+                                  {isCorrectOption ? (
+                                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                  ) : isSelected ? (
+                                    <XCircle className="h-4 w-4 text-red-600" />
+                                  ) : (
+                                    <Circle className="h-4 w-4 text-muted-foreground" />
+                                  )}
+                                </span>
+                                <span>{option}</span>
+                                {isSelected && (
+                                  <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    Selected
+                                  </span>
+                                )}
+                                {isCorrectOption && (
+                                  <span className="ml-2 rounded-full bg-green-600/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                                    Correct
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          // Short-answer view
+                          <div className="space-y-2 text-sm">
+                            <div
+                              className={
+                                'rounded-md border px-3 py-2 ' +
+                                (isCorrect
+                                  ? 'border-green-500 bg-green-100/80'
+                                  : 'border-red-500 bg-red-100/80')
+                              }
+                            >
+                              <p className="text-xs font-semibold mb-1">
+                                Student Answer
+                              </p>
+                              <p>{q.studentAnswer || <span className="italic text-muted-foreground">No answer</span>}</p>
+                            </div>
+                            <div className="rounded-md border px-3 py-2 border-muted bg-background">
+                              <p className="text-xs font-semibold mb-1">
+                                Correct Answer
+                              </p>
+                              <p>{q.correctAnswer || '-'}</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {q.explanation && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Explanation: {q.explanation}
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
