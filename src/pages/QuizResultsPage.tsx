@@ -69,8 +69,9 @@ interface AttemptQuestion {
   isCorrect: boolean;
   marks: number;
   explanation?: string;
-  selectedOptionIndex: number; // -1 if not matched
-  correctOptionIndex: number;  // -1 if not matched
+  // we won't trust backend indexes, we'll compute them ourselves
+  selectedOptionIndex?: number;
+  correctOptionIndex?: number;
 }
 
 interface AttemptDetail {
@@ -96,6 +97,10 @@ interface AttemptDetail {
 // Helper to show A/B/C/D labels
 const optionLabel = (index: number) => String.fromCharCode(65 + index); // 0 -> A, 1 -> B, ...
 
+// Simple normalizer so matching works even with small differences in spacing/case
+const normalize = (value?: string) =>
+  (value ?? '').toString().trim().toLowerCase();
+
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const navigate = useNavigate();
@@ -109,8 +114,12 @@ export default function QuizResultsPage() {
   // Detail dialog state
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(null);
-  const [attemptDetail, setAttemptDetail] = useState<AttemptDetail | null>(null);
+  const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(
+    null
+  );
+  const [attemptDetail, setAttemptDetail] = useState<AttemptDetail | null>(
+    null
+  );
 
   const fetchResults = useCallback(async () => {
     try {
@@ -496,7 +505,32 @@ export default function QuizResultsPage() {
 
               <div className="space-y-4">
                 {attemptDetail.questions.map((q, index) => {
-                  const isCorrect = q.isCorrect;
+                  const options = q.options || [];
+
+                  // Compute which option was selected & which is correct
+                  const selectedIdx = options.findIndex(
+                    (opt) => normalize(opt) === normalize(q.studentAnswer)
+                  );
+                  const correctIdx = options.findIndex(
+                    (opt) => normalize(opt) === normalize(q.correctAnswer)
+                  );
+
+                  const isMcq = q.type === 'mcq' && options.length > 0;
+                  const isCorrect = isMcq
+                    ? selectedIdx >= 0 && selectedIdx === correctIdx
+                    : q.isCorrect;
+
+                  const selectedLabel =
+                    selectedIdx >= 0
+                      ? `${optionLabel(selectedIdx)}. ${options[selectedIdx]}`
+                      : q.studentAnswer
+                      ? q.studentAnswer
+                      : 'No answer';
+
+                  const correctLabel =
+                    correctIdx >= 0
+                      ? `${optionLabel(correctIdx)}. ${options[correctIdx]}`
+                      : q.correctAnswer || '-';
 
                   return (
                     <Card
@@ -535,32 +569,24 @@ export default function QuizResultsPage() {
 
                       <CardContent className="space-y-2">
                         {/* MCQ view */}
-                        {q.type === 'mcq' && q.options && q.options.length > 0 ? (
+                        {isMcq ? (
                           <>
                             {/* Summary badges just below question */}
                             <div className="mb-3 flex flex-wrap gap-2 text-xs">
                               <span className="rounded-full bg-muted px-2 py-1">
                                 <span className="font-semibold">Selected:</span>{' '}
-                                {q.selectedOptionIndex >= 0
-                                  ? `${optionLabel(q.selectedOptionIndex)}. ${
-                                      q.options[q.selectedOptionIndex]
-                                    }`
-                                  : 'No answer'}
+                                {selectedLabel}
                               </span>
                               <span className="rounded-full bg-muted px-2 py-1">
                                 <span className="font-semibold">Correct:</span>{' '}
-                                {q.correctOptionIndex >= 0
-                                  ? `${optionLabel(q.correctOptionIndex)}. ${
-                                      q.options[q.correctOptionIndex]
-                                    }`
-                                  : '-'}
+                                {correctLabel}
                               </span>
                             </div>
 
-                            {/* Options list */}
-                            {q.options.map((option, idx) => {
-                              const isSelected = idx === q.selectedOptionIndex;
-                              const isCorrectOption = idx === q.correctOptionIndex;
+                            {/* Options list with circles */}
+                            {options.map((option, idx) => {
+                              const isSelected = idx === selectedIdx;
+                              const isCorrectOption = idx === correctIdx;
 
                               let optionClass =
                                 'flex items-start gap-2 rounded-md border px-3 py-2 text-sm';
