@@ -1,12 +1,36 @@
-import { useState, useEffect } from 'react';
+// src/pages/BookmarksPage.tsx
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bookmark, Trash2, FileEdit, Share2, FolderPlus, Folder } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Bookmark,
+  Trash2,
+  FileEdit,
+  Share2,
+  FolderPlus,
+  Folder,
+} from 'lucide-react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { bookmarksAPI, foldersAPI, quizAPI, studentsAPI } from '@/services/api';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  bookmarksAPI,
+  foldersAPI,
+  quizAPI,
+  studentsAPI,
+} from '@/services/api';
 import {
   Dialog,
   DialogContent,
@@ -17,23 +41,40 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-// ❌ removed StudentTable import
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 export default function BookmarksPage() {
   const navigate = useNavigate();
+
   const [bookmarks, setBookmarks] = useState<any[]>([]);
   const [folders, setFolders] = useState<any[]>([]);
   const [filterType, setFilterType] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
+
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [selectedQuizForShare, setSelectedQuizForShare] = useState<any>(null);
 
-  // selection state
-  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  // student selection
   const [students, setStudents] = useState<any[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  const [studentSearch, setStudentSearch] = useState('');
+  const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -46,6 +87,7 @@ export default function BookmarksPage() {
         foldersAPI.getAll(),
         studentsAPI.getAll(),
       ]);
+
       setBookmarks(bookmarksData || []);
       setFolders(foldersData || []);
       setStudents(studentsData || []);
@@ -60,7 +102,7 @@ export default function BookmarksPage() {
   const handleDeleteBookmark = async (id: string) => {
     try {
       await bookmarksAPI.delete(id);
-      setBookmarks(bookmarks.filter((b) => b._id !== id));
+      setBookmarks((prev) => prev.filter((b) => b._id !== id));
       toast.success('Bookmark removed');
     } catch (error) {
       console.error('Error deleting bookmark:', error);
@@ -85,7 +127,7 @@ export default function BookmarksPage() {
 
     try {
       const newFolder = await foldersAPI.create({ name: newFolderName });
-      setFolders([...folders, newFolder]);
+      setFolders((prev) => [...prev, newFolder]);
       setNewFolderName('');
       setNewFolderDialogOpen(false);
       toast.success('Folder created');
@@ -97,10 +139,14 @@ export default function BookmarksPage() {
 
   const handleShareQuiz = async () => {
     if (!selectedQuizForShare) return;
+    if (students.length === 0) {
+      toast.error('No students to share with');
+      return;
+    }
 
     try {
-      // Save the quiz (in case it's only in bookmarks)
-      const savedQuiz = await quizAPI.save({
+      // 1) Save quiz (in case it only exists as bookmark)
+      const saved = await quizAPI.save({
         title: selectedQuizForShare.quiz.title,
         description: selectedQuizForShare.quiz.description,
         questions: selectedQuizForShare.quiz.questions,
@@ -111,24 +157,25 @@ export default function BookmarksPage() {
         folderId: selectedQuizForShare.folderId,
       } as any);
 
-      // Use selected students if any, otherwise all
+      // 2) Build list of emails
       const studentEmails =
         selectedStudents.length > 0
           ? students
-              .filter((s) => selectedStudents.includes(s.id)) // or s._id if your API uses _id
+              .filter((s) => selectedStudents.includes(s._id))
               .map((s) => s.email)
           : students.map((s) => s.email);
 
       const result = await quizAPI.share({
-        quizId: savedQuiz.quizId,
+        quizId: saved.quizId,
         studentEmails,
         links: [],
       });
 
-      toast.success(`Quiz shared with ${result.links?.length || 0} students`);
+      toast.success(`Quiz shared with ${result.links?.length || 0} student(s)`);
       setShareDialogOpen(false);
       setSelectedQuizForShare(null);
       setSelectedStudents([]);
+      setStudentSearch('');
     } catch (error) {
       console.error('Error sharing quiz:', error);
       toast.error('Failed to share quiz');
@@ -137,13 +184,16 @@ export default function BookmarksPage() {
 
   const openShareDialog = (bookmark: any) => {
     setSelectedQuizForShare(bookmark);
-    setSelectedStudents([]); // reset selection when opening
+    setSelectedStudents([]);
+    setStudentSearch('');
     setShareDialogOpen(true);
   };
 
   const toggleStudentSelection = (studentId: string) => {
     setSelectedStudents((prev) =>
-      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId],
+      prev.includes(studentId)
+        ? prev.filter((id) => id !== studentId)
+        : [...prev, studentId],
     );
   };
 
@@ -151,9 +201,17 @@ export default function BookmarksPage() {
     if (selectedStudents.length === students.length) {
       setSelectedStudents([]);
     } else {
-      setSelectedStudents(students.map((s) => s.id)); // or s._id
+      setSelectedStudents(students.map((s) => s._id));
     }
   };
+
+  // keep header checkbox indeterminate when some but not all selected
+  useEffect(() => {
+    if (!headerCheckboxRef.current) return;
+    const all = students.length > 0 && selectedStudents.length === students.length;
+    const none = selectedStudents.length === 0;
+    headerCheckboxRef.current.indeterminate = !all && !none;
+  }, [selectedStudents, students.length]);
 
   if (loading) {
     return (
@@ -171,15 +229,24 @@ export default function BookmarksPage() {
     return b.quiz?.difficulty === filterType;
   });
 
-  // Group bookmarks by folder
+  // group by folder
   const bookmarksByFolder = filteredBookmarks.reduce((acc: any, bookmark: any) => {
     const folderId = bookmark.folderId?._id || bookmark.folderId || 'no-folder';
-    if (!acc[folderId]) {
-      acc[folderId] = [];
-    }
+    if (!acc[folderId]) acc[folderId] = [];
     acc[folderId].push(bookmark);
     return acc;
   }, {});
+
+  // filter students by search (name/email/usn)
+  const filteredStudents = students.filter((s) => {
+    if (!studentSearch.trim()) return true;
+    const q = studentSearch.toLowerCase();
+    return (
+      s.name?.toLowerCase().includes(q) ||
+      s.email?.toLowerCase().includes(q) ||
+      s.usn?.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="p-3 md:p-6 space-y-4 md:space-y-6 animate-fade-in max-w-6xl mx-auto">
@@ -197,7 +264,9 @@ export default function BookmarksPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="text-center">
-                <p className="text-2xl md:text-3xl font-bold text-primary">{quizBookmarks.length}</p>
+                <p className="text-2xl md:text-3xl font-bold text-primary">
+                  {quizBookmarks.length}
+                </p>
                 <p className="text-xs text-muted-foreground">Total Bookmarks</p>
               </div>
             </div>
@@ -214,6 +283,7 @@ export default function BookmarksPage() {
                   <SelectItem value="mixed">Mixed</SelectItem>
                 </SelectContent>
               </Select>
+
               <Dialog open={newFolderDialogOpen} onOpenChange={setNewFolderDialogOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm">
@@ -225,7 +295,7 @@ export default function BookmarksPage() {
                   <DialogHeader>
                     <DialogTitle>Create New Folder</DialogTitle>
                     <DialogDescription>
-                      Organize your bookmarked quizzes into folders
+                      Organize your bookmarked quizzes into folders.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
@@ -289,7 +359,7 @@ export default function BookmarksPage() {
                       {folderBookmarks.map((bookmark: any) => (
                         <Card key={bookmark._id} className="shadow-card">
                           <CardHeader>
-                            <div className="flex items-start justify-between">
+                            <div className="flex items-start justify-between gap-3">
                               <div className="space-y-1 flex-1">
                                 <CardTitle className="text-base md:text-lg">
                                   {bookmark.quiz?.title || 'Untitled Quiz'}
@@ -351,7 +421,10 @@ export default function BookmarksPage() {
                                               <p className="text-sm font-medium flex-1">
                                                 {idx + 1}. {q.question}
                                               </p>
-                                              <Badge variant="secondary" className="text-xs">
+                                              <Badge
+                                                variant="secondary"
+                                                className="text-xs capitalize"
+                                              >
                                                 {q.type}
                                               </Badge>
                                             </div>
@@ -363,10 +436,7 @@ export default function BookmarksPage() {
                                                       key={i}
                                                       className="text-xs text-muted-foreground"
                                                     >
-                                                      {String.fromCharCode(
-                                                        65 + i,
-                                                      )}
-                                                      . {opt}
+                                                      {String.fromCharCode(65 + i)}. {opt}
                                                     </p>
                                                   ),
                                                 )}
@@ -397,7 +467,7 @@ export default function BookmarksPage() {
         </Accordion>
       )}
 
-      {/* SHARE DIALOG WITH CHECKBOX TABLE */}
+      {/* SHARE DIALOG */}
       <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
@@ -405,34 +475,49 @@ export default function BookmarksPage() {
             <DialogDescription>
               Select students to share "
               {selectedQuizForShare?.quiz?.title || 'this quiz'}" with.
-              <br />
-              If you don't select anyone, it will be shared with <b>all students</b>.
+              If no student is selected, the quiz will be sent to
+              <span className="font-semibold"> all students</span>.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <p className="text-sm text-muted-foreground">
-              Selected: {selectedStudents.length} / {students.length}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={toggleSelectAll}
-              disabled={students.length === 0}
-            >
-              {selectedStudents.length === students.length ? 'Clear Selection' : 'Select All'}
-            </Button>
+          <div className="flex flex-col gap-3 mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">
+                Selected: {selectedStudents.length} / {students.length}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleSelectAll}
+                disabled={students.length === 0}
+              >
+                {selectedStudents.length === students.length
+                  ? 'Clear Selection'
+                  : 'Select All'}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="student-search" className="text-xs md:text-sm">
+                Search
+              </Label>
+              <Input
+                id="student-search"
+                placeholder="Filter by name, email, or USN"
+                value={studentSearch}
+                onChange={(e) => setStudentSearch(e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
           </div>
 
-          {/* Simple table with checkboxes */}
           <div className="border rounded-md overflow-hidden">
             <div className="max-h-80 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left w-10">
-                      {/* header checkbox toggles all */}
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
                       <input
+                        ref={headerCheckboxRef}
                         type="checkbox"
                         checked={
                           students.length > 0 &&
@@ -440,47 +525,47 @@ export default function BookmarksPage() {
                         }
                         onChange={toggleSelectAll}
                       />
-                    </th>
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Email</th>
-                    <th className="px-3 py-2 text-left">USN</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {students.map((student) => {
-                    const id = student.id; // or student._id
+                    </TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>USN</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredStudents.map((student) => {
+                    const id = student._id;
                     const isSelected = selectedStudents.includes(id);
                     return (
-                      <tr
+                      <TableRow
                         key={id}
-                        className={isSelected ? 'bg-primary/5' : 'hover:bg-muted/60'}
+                        className={isSelected ? 'bg-primary/5' : ''}
                       >
-                        <td className="px-3 py-2">
+                        <TableCell>
                           <input
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleStudentSelection(id)}
                           />
-                        </td>
-                        <td className="px-3 py-2">{student.name}</td>
-                        <td className="px-3 py-2">{student.email}</td>
-                        <td className="px-3 py-2">{student.usn}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>{student.name}</TableCell>
+                        <TableCell>{student.email}</TableCell>
+                        <TableCell>{student.usn}</TableCell>
+                      </TableRow>
                     );
                   })}
 
-                  {students.length === 0 && (
-                    <tr>
-                      <td
+                  {filteredStudents.length === 0 && (
+                    <TableRow>
+                      <TableCell
                         colSpan={4}
-                        className="px-3 py-6 text-center text-muted-foreground"
+                        className="text-center py-6 text-muted-foreground"
                       >
                         No students found.
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           </div>
 
