@@ -1,16 +1,34 @@
 // src/pages/StudentQuizPage.tsx
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/use-toast';
-import { Loader2, Clock, CheckCircle2, AlertCircle, Maximize2 } from 'lucide-react';
+import {
+  Loader2,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Maximize2,
+} from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
@@ -45,7 +63,7 @@ export default function StudentQuizPage() {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [email, setEmail] = useState('');
 
-  // Student info form
+  // Student info form (locked details)
   const [showInfoForm, setShowInfoForm] = useState(false);
   const [studentName, setStudentName] = useState('');
   const [studentUSN, setStudentUSN] = useState('');
@@ -151,7 +169,7 @@ export default function StudentQuizPage() {
       setWarningCount(data.warningCount || 0);
       localWarningsRef.current = data.warningCount || 0;
 
-      // 🔹 Prefill ALL student info from backend (and lock those fields in UI)
+      // Prefill ALL student info from backend (and lock those fields in UI)
       const info = data.studentInfo || {};
       setStudentName(info.name || '');
       setStudentUSN(info.usn || '');
@@ -187,7 +205,13 @@ export default function StudentQuizPage() {
   // ----------------- START / SUBMIT -----------------
   const handleStartQuiz = async () => {
     // Still keep basic validation in case backend missed something
-    if (!studentName.trim() || !studentUSN.trim() || !studentBranch || !studentYear || !studentSemester) {
+    if (
+      !studentName.trim() ||
+      !studentUSN.trim() ||
+      !studentBranch ||
+      !studentYear ||
+      !studentSemester
+    ) {
       toast({
         title: 'Missing Information',
         description: 'Your details are incomplete. Please contact your teacher.',
@@ -271,7 +295,9 @@ export default function StudentQuizPage() {
     }
   };
 
-  const handleAutoSubmitAsCheat = async (reason = 'violation:auto-submit') => {
+  const handleAutoSubmitAsCheat = async (
+    reason = 'violation:auto-submit',
+  ) => {
     if (quizSubmittedRef.current) return;
 
     quizActiveRef.current = false;
@@ -313,7 +339,10 @@ export default function StudentQuizPage() {
   };
 
   // ----------------- FULLSCREEN HELPERS -----------------
-  const tryEnterFullscreen = async (retries = 3, delayMs = 300): Promise<boolean> => {
+  const tryEnterFullscreen = async (
+    retries = 3,
+    delayMs = 300,
+  ): Promise<boolean> => {
     const attemptFS = async (): Promise<boolean> => {
       try {
         if (document.fullscreenElement) return true;
@@ -361,7 +390,6 @@ export default function StudentQuizPage() {
     monitoringRef.current = true;
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
-    // window.addEventListener('blur', onWindowBlur, true); // REMOVED
     window.addEventListener('focus', onWindowFocus, true);
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
@@ -378,7 +406,6 @@ export default function StudentQuizPage() {
     monitoringRef.current = false;
 
     document.removeEventListener('visibilitychange', onVisibilityChange, true);
-    // window.removeEventListener('blur', onWindowBlur, true); // REMOVED
     window.removeEventListener('focus', onWindowFocus, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
@@ -535,11 +562,15 @@ export default function StudentQuizPage() {
     try {
       const body = document.body;
 
-      if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
+      if (!body.dataset.prevUserSelect)
+        body.dataset.prevUserSelect = body.style.userSelect || '';
       if (!body.dataset.prevWebkitTouchCallout)
-        body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
-      if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
-      if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
+        (body.dataset as any).prevWebkitTouchCallout =
+          (body.style as any).webkitTouchCallout || '';
+      if (!body.dataset.prevTouchAction)
+        body.dataset.prevTouchAction = body.style.touchAction || '';
+      if (!body.dataset.prevOverflow)
+        body.dataset.prevOverflow = body.style.overflow || '';
 
       body.style.userSelect = 'none';
       (body.style as any).webkitTouchCallout = 'none';
@@ -553,15 +584,19 @@ export default function StudentQuizPage() {
   const restoreBodyStyles = () => {
     try {
       const body = document.body;
-      if (body.dataset.prevUserSelect !== undefined) body.style.userSelect = body.dataset.prevUserSelect;
-      if (body.dataset.prevWebkitTouchCallout !== undefined) {
-        (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
+      if (body.dataset.prevUserSelect !== undefined)
+        body.style.userSelect = body.dataset.prevUserSelect;
+      if ((body.dataset as any).prevWebkitTouchCallout !== undefined) {
+        (body.style as any).webkitTouchCallout = (body.dataset as any)
+          .prevWebkitTouchCallout;
       }
-      if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
-      if (body.dataset.prevOverflow !== undefined) body.style.overflow = body.dataset.prevOverflow;
+      if (body.dataset.prevTouchAction !== undefined)
+        body.style.touchAction = body.dataset.prevTouchAction;
+      if (body.dataset.prevOverflow !== undefined)
+        body.style.overflow = body.dataset.prevOverflow;
 
       delete body.dataset.prevUserSelect;
-      delete body.dataset.prevWebkitTouchCallout;
+      delete (body.dataset as any).prevWebkitTouchCallout;
       delete body.dataset.prevTouchAction;
       delete body.dataset.prevOverflow;
     } catch {
@@ -711,15 +746,21 @@ export default function StudentQuizPage() {
 
             <div>
               <p className="text-sm text-muted-foreground">
-                Your details are provided by your instructor and cannot be changed here.
-                Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen, you get a warning.
-                After 3 warnings, the quiz is blocked and auto-submitted. On mobile, if you leave the quiz
-                screen (including using system assistants like Gemini) it may be auto-submitted immediately.
-                If you stay away for more than 10 seconds, it will also auto-submit.
+                Your details are provided by your instructor and cannot be changed
+                here.
+                <br />
+                Monitoring is enabled. If you minimize, switch tabs, or exit
+                fullscreen, you get a warning. After 3 warnings, the quiz is
+                blocked and auto-submitted. On mobile, leaving the quiz screen can
+                immediately auto-submit.
               </p>
             </div>
 
-            <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
+            <Button
+              onClick={handleStartQuiz}
+              className="w-full"
+              disabled={loading}
+            >
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...
@@ -761,7 +802,9 @@ export default function StudentQuizPage() {
                   }`}
                 />
                 <span
-                  className={timeLeft < 300 ? 'text-destructive' : 'text-foreground'}
+                  className={
+                    timeLeft < 300 ? 'text-destructive' : 'text-foreground'
+                  }
                 >
                   {formatTime(timeLeft)}
                 </span>
@@ -800,14 +843,19 @@ export default function StudentQuizPage() {
         <div className="max-w-4xl mx-auto px-4 py-8">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Question {currentQuestion + 1}</CardTitle>
+              <CardTitle className="text-lg">
+                Question {currentQuestion + 1}
+              </CardTitle>
               <CardDescription className="text-base text-foreground pt-2">
                 {question.question}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {question.type === 'mcq' && question.options ? (
-                <RadioGroup value={answers[currentQuestion]} onValueChange={handleAnswerChange}>
+                <RadioGroup
+                  value={answers[currentQuestion]}
+                  onValueChange={handleAnswerChange}
+                >
                   {question.options.map((opt, idx) => (
                     <div
                       key={idx}
@@ -817,7 +865,10 @@ export default function StudentQuizPage() {
                         value={String.fromCharCode(65 + idx)}
                         id={`opt-${idx}`}
                       />
-                      <Label htmlFor={`opt-${idx}`} className="flex-1 cursor-pointer">
+                      <Label
+                        htmlFor={`opt-${idx}`}
+                        className="flex-1 cursor-pointer"
+                      >
                         <span className="font-semibold mr-2">
                           {String.fromCharCode(65 + idx)}.
                         </span>
@@ -841,7 +892,9 @@ export default function StudentQuizPage() {
               <div className="flex items-center justify-between pt-4 border-t">
                 <Button
                   variant="outline"
-                  onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
+                  onClick={() =>
+                    setCurrentQuestion(Math.max(0, currentQuestion - 1))
+                  }
                   disabled={currentQuestion === 0}
                 >
                   Previous
@@ -851,7 +904,8 @@ export default function StudentQuizPage() {
                   <Button onClick={handleSubmitQuiz} disabled={submitting}>
                     {submitting ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />{' '}
+                        Submitting...
                       </>
                     ) : (
                       'Submit Quiz'
@@ -861,7 +915,10 @@ export default function StudentQuizPage() {
                   <Button
                     onClick={() =>
                       setCurrentQuestion(
-                        Math.min(quiz.questions.length - 1, currentQuestion + 1),
+                        Math.min(
+                          quiz.questions.length - 1,
+                          currentQuestion + 1,
+                        ),
                       )
                     }
                   >
@@ -909,7 +966,9 @@ export default function StudentQuizPage() {
       <Card className="max-w-md w-full">
         <CardHeader className="text-center">
           <CardTitle>Quiz Not Found</CardTitle>
-          <CardDescription>The quiz link is invalid or has expired.</CardDescription>
+          <CardDescription>
+            The quiz link is invalid or has expired.
+          </CardDescription>
         </CardHeader>
       </Card>
     </div>
