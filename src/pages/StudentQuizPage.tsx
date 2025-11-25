@@ -14,9 +14,9 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
-const LEAVE_TIMEOUT_MS = 10000;
+const LEAVE_BUDGET_MS = 10000; // 10 seconds total budget across all leaves
 
-// Detect mobile – used to adjust behavior
+// Detect mobile – used to adjust behavior if needed later
 const isMobile =
   typeof navigator !== 'undefined' &&
   /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -68,7 +68,11 @@ export default function StudentQuizPage() {
   const lastWarnAtRef = useRef<number>(0);
   const tokenRef = useRef<string | undefined>(token);
   const monitoringRef = useRef<boolean>(false);
+
+  // Leave / away tracking: cumulative 10-second budget
   const leaveTimeoutRef = useRef<number | null>(null);
+  const leaveStartAtRef = useRef<number | null>(null);
+  const remainingLeaveMsRef = useRef<number>(LEAVE_BUDGET_MS);
 
   const quizActiveRef = useRef<boolean>(false);
   const quizSubmittedRef = useRef<boolean>(false);
@@ -160,9 +164,14 @@ export default function StudentQuizPage() {
         setAnswers(new Array(data.quiz.questions.length).fill(''));
         setTimeLeft((data.quiz.duration || 30) * 60);
 
+        // Resume quiz
         setQuizStarted(true);
         applyBodyStyles();
         setShowInfoForm(false);
+
+        // Reset leave budget for this active session
+        remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
+        clearLeaveTimer();
       } else {
         setShowInfoForm(true);
       }
@@ -219,6 +228,10 @@ export default function StudentQuizPage() {
       await tryEnterFullscreen(3, 300);
 
       setQuizStarted(true);
+
+      // Fresh 10-second leave budget for this attempt
+      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
+      clearLeaveTimer();
 
       toast({
         title: 'Quiz Started',
@@ -336,21 +349,51 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // ----------------- LEAVE TIMER HELPERS -----------------
+  // ----------------- LEAVE TIMER HELPERS (cumulative 10s) -----------------
   const startLeaveTimer = (reason: string) => {
-    if (leaveTimeoutRef.current != null || quizSubmittedRef.current) return;
+    if (quizSubmittedRef.current) return;
+
+    // If no budget left, auto-submit immediately
+    if (remainingLeaveMsRef.current <= 0) {
+      handleAutoSubmitAsCheat(`${reason}:no-budget-left`);
+      return;
+    }
+
+    // If a timer is already running, don't start another
+    if (leaveTimeoutRef.current != null) return;
+
+    // Mark when this leave started
+    leaveStartAtRef.current = Date.now();
+
+    // Use whatever budget is left as the timeout duration
     leaveTimeoutRef.current = window.setTimeout(() => {
       leaveTimeoutRef.current = null;
+
+      // We've just used up the entire remaining budget
+      remainingLeaveMsRef.current = 0;
+      leaveStartAtRef.current = null;
+
+      if (!guard()) return;
+
+      // If still hidden/away, auto-submit as cheat
       if (document.visibilityState !== 'visible') {
         handleAutoSubmitAsCheat(`${reason}:timeout`);
       }
-    }, LEAVE_TIMEOUT_MS);
+    }, remainingLeaveMsRef.current);
   };
 
   const clearLeaveTimer = () => {
+    // Stop any running timeout
     if (leaveTimeoutRef.current != null) {
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
+    }
+
+    // Deduct the time spent away from the remaining budget
+    if (leaveStartAtRef.current != null) {
+      const usedMs = Date.now() - leaveStartAtRef.current;
+      remainingLeaveMsRef.current = Math.max(0, remainingLeaveMsRef.current - usedMs);
+      leaveStartAtRef.current = null;
     }
   };
 
@@ -422,24 +465,22 @@ export default function StudentQuizPage() {
     if (!guard()) return;
 
     if (document.visibilityState === 'visible') {
+      // Came back – stop timer and deduct used time
       clearLeaveTimer();
       return;
     }
 
+    // Just became hidden
     const firedAt = Date.now();
     setTimeout(() => {
       if (!guard()) return;
       if (document.visibilityState === 'visible') return;
-      if (Date.now() - firedAt < 250) return;
+      if (Date.now() - firedAt < 250) return; // ignore tiny glitches
 
-      if (isMobile) {
-        sendFlag('visibility:hidden:mobile');
-        handleAutoSubmitAsCheat('visibility:hidden:mobile-immediate');
-        return;
-      }
-
+      // Same behaviour for desktop and mobile now (uses 10s budget)
       sendFlag('visibility:hidden');
       const count = localWarningsRef.current;
+
       if (count >= MAX_WARNINGS) {
         handleAutoSubmitAsCheat('visibility:hidden:max-warnings');
       } else {
@@ -457,7 +498,9 @@ export default function StudentQuizPage() {
     if (!guard()) return;
 
     const isFs = !!document.fullscreenElement;
+
     if (!isFs) {
+      // Exited fullscreen
       sendFlag('fullscreen:exited');
       const count = localWarningsRef.current;
       if (count >= MAX_WARNINGS) {
@@ -466,6 +509,7 @@ export default function StudentQuizPage() {
         startLeaveTimer('fullscreen:exited');
       }
     } else {
+      // Entered fullscreen again – stop leave timer and deduct used time
       clearLeaveTimer();
     }
   };
@@ -642,12 +686,7 @@ export default function StudentQuizPage() {
               </div>
               <div>
                 <Label htmlFor="semester">Semester *</Label>
-                <Input
-                  id="semester"
-                  value={studentSemester}
-                  disabled
-                  className="bg-muted"
-                />
+                <Input id="semester" value={studentSemester} disabled className="bg-muted" />
               </div>
             </div>
 
@@ -656,7 +695,8 @@ export default function StudentQuizPage() {
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen,
                 you get a warning. After 3 warnings, the quiz is blocked and auto-submitted.
-                On mobile, leaving the quiz screen can immediately auto-submit.
+                Leaving the quiz screen uses your 10-second away budget; once that is
+                exhausted, the quiz is auto-submitted.
               </p>
             </div>
 

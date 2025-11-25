@@ -1,4 +1,3 @@
-// src/services/api.ts
 import axios from 'axios';
 import { Quiz, Student, QuizShare } from '@/types';
 
@@ -37,7 +36,7 @@ export const quizAPI = {
     return response.data;
   },
 
-  // 🔴 DELETE quiz + all its attempts (routes/quiz.js -> router.delete('/:id', ...))
+  // DELETE quiz + all its attempts
   delete: async (quizId: string): Promise<{ success: boolean; message?: string }> => {
     const response = await api.delete(`/quiz/${quizId}`);
     return response.data;
@@ -50,13 +49,14 @@ export const quizAPI = {
   },
 
   // For main quiz results page (list of attempts)
-  getResults: async (quizId: string): Promise<{ success: boolean; quiz: any; attempts: any[] }> => {
+  getResults: async (
+    quizId: string
+  ): Promise<{ success: boolean; quiz: any; attempts: any[] }> => {
     const response = await api.get(`/quiz/${quizId}/results`);
     return response.data;
   },
 
-  // 🟢 NEW: for student answer detail dialog
-  // Hits GET /api/quiz/:id/results/:attemptId
+  // For student answer detail dialog
   getAttemptDetail: async (
     quizId: string,
     attemptId: string
@@ -77,7 +77,8 @@ export const studentsAPI = {
     const response = await api.get('/students/all');
     return response.data;
   },
- create: async (data: Partial<Student>): Promise<Student> => {
+
+  create: async (data: Partial<Student>): Promise<Student> => {
     const response = await api.post('/students', data);
     return response.data;
   },
