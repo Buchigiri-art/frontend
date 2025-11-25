@@ -16,7 +16,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total budget across all leaves
 
-// Detect mobile – used to adjust behavior if needed later
+// Detect mobile – currently same behavior, but kept in case you want future tweaks
 const isMobile =
   typeof navigator !== 'undefined' &&
   /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -350,7 +350,12 @@ export default function StudentQuizPage() {
   };
 
   // ----------------- LEAVE TIMER HELPERS (cumulative 10s) -----------------
-  const startLeaveTimer = (reason: string) => {
+  /**
+   * Start a countdown using the remaining 10s "away" budget.
+   * If the time elapses AND the student is still "away" (according to stillAwayCheck),
+   * auto-submit as cheat.
+   */
+  const startLeaveTimer = (reason: string, stillAwayCheck: () => boolean) => {
     if (quizSubmittedRef.current) return;
 
     // If no budget left, auto-submit immediately
@@ -375,8 +380,8 @@ export default function StudentQuizPage() {
 
       if (!guard()) return;
 
-      // If still hidden/away, auto-submit as cheat
-      if (document.visibilityState !== 'visible') {
+      // If still away according to the specific condition, auto-submit as cheat
+      if (stillAwayCheck()) {
         handleAutoSubmitAsCheat(`${reason}:timeout`);
       }
     }, remainingLeaveMsRef.current);
@@ -461,6 +466,7 @@ export default function StudentQuizPage() {
     return true;
   };
 
+  // Tab change / minimize / app switch
   const onVisibilityChange = () => {
     if (!guard()) return;
 
@@ -477,14 +483,16 @@ export default function StudentQuizPage() {
       if (document.visibilityState === 'visible') return;
       if (Date.now() - firedAt < 250) return; // ignore tiny glitches
 
-      // Same behaviour for desktop and mobile now (uses 10s budget)
+      // Immediate warning (1st, 2nd, 3rd, etc.)
       sendFlag('visibility:hidden');
       const count = localWarningsRef.current;
 
+      // 3rd warning -> immediate auto-submit
       if (count >= MAX_WARNINGS) {
         handleAutoSubmitAsCheat('visibility:hidden:max-warnings');
       } else {
-        startLeaveTimer('visibility:hidden');
+        // Also start the 10-second away timer (cumulative)
+        startLeaveTimer('visibility:hidden', () => document.visibilityState !== 'visible');
       }
     }, 300);
   };
@@ -494,6 +502,7 @@ export default function StudentQuizPage() {
     clearLeaveTimer();
   };
 
+  // Fullscreen exit / re-enter
   const onFullscreenChange = () => {
     if (!guard()) return;
 
@@ -504,9 +513,11 @@ export default function StudentQuizPage() {
       sendFlag('fullscreen:exited');
       const count = localWarningsRef.current;
       if (count >= MAX_WARNINGS) {
+        // 3rd warning -> immediate auto-submit
         handleAutoSubmitAsCheat('fullscreen:exited:max-warnings');
       } else {
-        startLeaveTimer('fullscreen:exited');
+        // Use the same 10s cumulative budget for staying out of fullscreen
+        startLeaveTimer('fullscreen:exited', () => !document.fullscreenElement);
       }
     } else {
       // Entered fullscreen again – stop leave timer and deduct used time
@@ -695,8 +706,9 @@ export default function StudentQuizPage() {
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen,
                 you get a warning. After 3 warnings, the quiz is blocked and auto-submitted.
-                Leaving the quiz screen uses your 10-second away budget; once that is
-                exhausted, the quiz is auto-submitted.
+                Leaving the quiz screen or exiting fullscreen uses your 10-second away budget;
+                once that is exhausted, the quiz is auto-submitted even if warnings are less
+                than 3.
               </p>
             </div>
 
