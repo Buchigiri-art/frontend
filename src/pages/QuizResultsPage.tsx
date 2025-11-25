@@ -30,9 +30,11 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
-import api from '@/services/api'; // ✅ use configured axios instance
+import api from '@/services/api'; // ✅ use shared axios instance
 import {
   Dialog,
   DialogContent,
@@ -94,6 +96,9 @@ const optionLabel = (index: number) => String.fromCharCode(65 + index);
 // normalize strings for comparison
 const normalize = (v?: string) => (v ?? '').trim().toLowerCase();
 
+// simple client-side pagination size
+const PAGE_SIZE = 25;
+
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const navigate = useNavigate();
@@ -113,38 +118,65 @@ export default function QuizResultsPage() {
     null
   );
 
-  const fetchResults = useCallback(async () => {
-    try {
-      const data = await quizAPI.getResults(quizId!);
-      setQuizTitle(data.quiz.title);
-      setAttempts(data.attempts);
-    } catch (error: any) {
-      console.error('Error fetching results:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load quiz results',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [quizId]);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(attempts.length / PAGE_SIZE));
+  const paginatedAttempts = attempts.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE
+  );
+
+  const fetchResults = useCallback(
+    async () => {
+      if (!quizId) {
+        setLoading(false);
+        toast({
+          title: 'Error',
+          description: 'Missing quiz id in URL',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      try {
+        const data = await quizAPI.getResults(quizId);
+        if (!data || !data.quiz) {
+          throw new Error('Invalid response from server');
+        }
+        setQuizTitle(data.quiz.title || 'Quiz');
+        setAttempts(Array.isArray(data.attempts) ? data.attempts : []);
+        setPage(1); // whenever fresh data is loaded, reset to first page
+      } catch (error: any) {
+        console.error('Error fetching results:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to load quiz results',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [quizId]
+  );
 
   useEffect(() => {
     fetchResults();
   }, [fetchResults]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(() => fetchResults(), 10000);
+    if (!autoRefresh || !quizId) return;
+    const interval = setInterval(() => {
+      fetchResults();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchResults]);
+  }, [autoRefresh, fetchResults, quizId]);
 
   const handleDownloadExcel = async (detailed: boolean = false) => {
     if (!quizId) return;
     setDownloading(true);
     try {
-      // ✅ use your configured axios instance
+      // ✅ use shared axios instance with baseURL + withCredentials
       const response = await api.get(
         `/quiz/${quizId}/results/download${detailed ? '?detailed=true' : ''}`,
         {
@@ -157,13 +189,16 @@ export default function QuizResultsPage() {
       link.href = url;
       link.setAttribute(
         'download',
-        `${quizTitle.replace(/[^a-z0-9]/gi, '_')}_results${
+        `${(quizTitle || 'quiz')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/gi, '_')}_results${
           detailed ? '_detailed' : ''
         }.xlsx`
       );
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
 
       toast({
         title: 'Success',
@@ -183,13 +218,25 @@ export default function QuizResultsPage() {
 
   const calculateStats = () => {
     if (attempts.length === 0) return null;
-    const avg =
-      attempts.reduce((sum, a) => sum + a.percentage, 0) / attempts.length;
-    const passCount = attempts.filter((a) => a.percentage >= 40).length;
-    const highest = Math.max(...attempts.map((a) => a.totalMarks));
-    const lowest = Math.min(...attempts.map((a) => a.totalMarks));
+    const avgRaw =
+      attempts.reduce((sum, a) => sum + (a.percentage || 0), 0) /
+      attempts.length;
+    const avgPercentage = Number.isFinite(avgRaw) ? avgRaw : 0;
+    const passCount = attempts.filter((a) => (a.percentage || 0) >= 40).length;
+
+    const totalMarksArr = attempts
+      .map((a) => a.totalMarks)
+      .filter((v) => typeof v === 'number' && Number.isFinite(v));
+
+    const highest = totalMarksArr.length
+      ? Math.max(...totalMarksArr)
+      : 0;
+    const lowest = totalMarksArr.length
+      ? Math.min(...totalMarksArr)
+      : 0;
+
     return {
-      avgPercentage: avg.toFixed(2),
+      avgPercentage: avgPercentage.toFixed(2),
       passRate: ((passCount / attempts.length) * 100).toFixed(1),
       highestScore: highest,
       lowestScore: lowest,
@@ -234,10 +281,14 @@ export default function QuizResultsPage() {
     <div className="p-8">
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => navigate('/results')}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/results')}
+              >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Results
               </Button>
@@ -251,14 +302,16 @@ export default function QuizResultsPage() {
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => setAutoRefresh((v) => !v)}
               variant={autoRefresh ? 'default' : 'outline'}
               size="sm"
             >
               <RefreshCw
-                className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`}
+                className={`h-4 w-4 mr-2 ${
+                  autoRefresh ? 'animate-spin' : ''
+                }`}
               />
               {autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'}
             </Button>
@@ -294,7 +347,9 @@ export default function QuizResultsPage() {
           <div className="grid gap-4 md:grid-cols-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Students</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Total Students
+                </CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -304,28 +359,38 @@ export default function QuizResultsPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Average Score</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Average Score
+                </CardTitle>
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stats.avgPercentage}%</div>
+                <div className="text-2xl font-bold">
+                  {stats.avgPercentage}%
+                </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pass Rate</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Pass Rate
+                </CardTitle>
                 <Award className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{stats.passRate}%</div>
-                <p className="text-xs text-muted-foreground mt-1">≥40% to pass</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  ≥40% to pass
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Score Range</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Score Range
+                </CardTitle>
                 <Award className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -357,68 +422,121 @@ export default function QuizResultsPage() {
                 </p>
               </div>
             ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Student Name</TableHead>
-                      <TableHead>USN</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead>Year/Sem</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Percentage</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Submitted At</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {attempts.map((attempt) => (
-                      <TableRow
-                        key={attempt._id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => openAttemptDetail(attempt)}
-                      >
-                        <TableCell className="font-medium">
-                          {attempt.studentName}
-                        </TableCell>
-                        <TableCell>{attempt.studentUSN}</TableCell>
-                        <TableCell>{attempt.studentBranch}</TableCell>
-                        <TableCell>
-                          {attempt.studentYear}/{attempt.studentSemester}
-                        </TableCell>
-                        <TableCell>
-                          {attempt.totalMarks}/{attempt.maxMarks}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={
-                              attempt.percentage >= 40
-                                ? 'text-green-600 font-semibold'
-                                : 'text-red-600 font-semibold'
-                            }
-                          >
-                            {attempt.percentage.toFixed(1)}%
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              attempt.status === 'graded' ? 'default' : 'secondary'
-                            }
-                          >
-                            {attempt.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {attempt.submittedAt
-                            ? new Date(attempt.submittedAt).toLocaleString()
-                            : '-'}
-                        </TableCell>
+              <>
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Student Name</TableHead>
+                        <TableHead>USN</TableHead>
+                        <TableHead>Branch</TableHead>
+                        <TableHead>Year/Sem</TableHead>
+                        <TableHead>Score</TableHead>
+                        <TableHead>Percentage</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Submitted At</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedAttempts.map((attempt) => (
+                        <TableRow
+                          key={attempt._id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => openAttemptDetail(attempt)}
+                        >
+                          <TableCell className="font-medium">
+                            {attempt.studentName}
+                          </TableCell>
+                          <TableCell>{attempt.studentUSN}</TableCell>
+                          <TableCell>{attempt.studentBranch}</TableCell>
+                          <TableCell>
+                            {attempt.studentYear}/{attempt.studentSemester}
+                          </TableCell>
+                          <TableCell>
+                            {attempt.totalMarks}/{attempt.maxMarks}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={
+                                (attempt.percentage || 0) >= 40
+                                  ? 'text-green-600 font-semibold'
+                                  : 'text-red-600 font-semibold'
+                              }
+                            >
+                              {Number.isFinite(attempt.percentage)
+                                ? attempt.percentage.toFixed(1)
+                                : '0.0'}
+                              %
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                attempt.status === 'graded'
+                                  ? 'default'
+                                  : 'secondary'
+                              }
+                            >
+                              {attempt.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {attempt.submittedAt
+                              ? new Date(
+                                  attempt.submittedAt
+                                ).toLocaleString()
+                              : '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Pagination controls */}
+                {totalPages > 1 && (
+                  <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
+                    <div>
+                      Showing{' '}
+                      <span className="font-semibold">
+                        {(page - 1) * PAGE_SIZE + 1}
+                      </span>{' '}
+                      –{' '}
+                      <span className="font-semibold">
+                        {Math.min(page * PAGE_SIZE, attempts.length)}
+                      </span>{' '}
+                      of{' '}
+                      <span className="font-semibold">{attempts.length}</span>{' '}
+                      students
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        disabled={page === 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span>
+                        Page{' '}
+                        <span className="font-semibold">{page}</span> of{' '}
+                        <span className="font-semibold">{totalPages}</span>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        disabled={page === totalPages}
+                        onClick={() =>
+                          setPage((p) => Math.min(totalPages, p + 1))
+                        }
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
@@ -459,13 +577,16 @@ export default function QuizResultsPage() {
                   <p className="text-xs text-muted-foreground">
                     Submitted:{' '}
                     {attemptDetail.submittedAt
-                      ? new Date(attemptDetail.submittedAt).toLocaleString()
+                      ? new Date(
+                          attemptDetail.submittedAt
+                        ).toLocaleString()
                       : '-'}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs">
                   <span className="font-semibold">
-                    Score: {attemptDetail.totalMarks}/{attemptDetail.maxMarks}
+                    Score: {attemptDetail.totalMarks}/
+                    {attemptDetail.maxMarks}
                   </span>
                   <span
                     className={
@@ -474,7 +595,10 @@ export default function QuizResultsPage() {
                         : 'font-semibold text-red-600'
                     }
                   >
-                    {attemptDetail.percentage.toFixed(1)}%
+                    {Number.isFinite(attemptDetail.percentage)
+                      ? attemptDetail.percentage.toFixed(1)
+                      : '0.0'}
+                    %
                   </span>
                 </div>
               </div>
@@ -491,6 +615,7 @@ export default function QuizResultsPage() {
                   );
                   const isMcq = q.type === 'mcq' && options.length > 0;
 
+                  // use backend isCorrect OR computed equality
                   const isCorrect =
                     q.isCorrect ||
                     (isMcq &&
@@ -500,14 +625,18 @@ export default function QuizResultsPage() {
 
                   const selectedLabel =
                     selectedIdx >= 0
-                      ? `${optionLabel(selectedIdx)}. ${options[selectedIdx]}`
+                      ? `${optionLabel(selectedIdx)}. ${
+                          options[selectedIdx]
+                        }`
                       : q.studentAnswer
                       ? q.studentAnswer
                       : 'No answer';
 
                   const correctLabel =
                     correctIdx >= 0
-                      ? `${optionLabel(correctIdx)}. ${options[correctIdx]}`
+                      ? `${optionLabel(correctIdx)}. ${
+                          options[correctIdx]
+                        }`
                       : q.correctAnswer || '-';
 
                   return (
@@ -533,12 +662,16 @@ export default function QuizResultsPage() {
                             {isCorrect ? (
                               <>
                                 <CheckCircle2 className="h-4 w-4 text-green-600" />
-                                <span className="text-green-700">Correct</span>
+                                <span className="text-green-700">
+                                  Correct
+                                </span>
                               </>
                             ) : (
                               <>
                                 <XCircle className="h-4 w-4 text-red-600" />
-                                <span className="text-red-700">Incorrect</span>
+                                <span className="text-red-700">
+                                  Incorrect
+                                </span>
                               </>
                             )}
                           </div>
@@ -551,11 +684,15 @@ export default function QuizResultsPage() {
                             {/* Summary row */}
                             <div className="mb-3 flex flex-wrap gap-2 text-xs">
                               <span className="rounded-full bg-muted px-2 py-1">
-                                <span className="font-semibold">Selected:</span>{' '}
+                                <span className="font-semibold">
+                                  Selected:
+                                </span>{' '}
                                 {selectedLabel}
                               </span>
                               <span className="rounded-full bg-muted px-2 py-1">
-                                <span className="font-semibold">Correct:</span>{' '}
+                                <span className="font-semibold">
+                                  Correct:
+                                </span>{' '}
                                 {correctLabel}
                               </span>
                             </div>
@@ -575,17 +712,21 @@ export default function QuizResultsPage() {
                                 optionClass +=
                                   ' border-red-500 bg-red-100/80 font-medium';
                               } else {
-                                optionClass += ' border-muted bg-background';
+                                optionClass +=
+                                  ' border-muted bg-background';
                               }
 
                               let circleClass =
                                 'h-4 w-4 rounded-full border flex items-center justify-center';
                               if (isCorrectOption) {
-                                circleClass += ' border-green-600 bg-green-600';
+                                circleClass +=
+                                  ' border-green-600 bg-green-600';
                               } else if (isSelected) {
-                                circleClass += ' border-red-600 bg-red-600';
+                                circleClass +=
+                                  ' border-red-600 bg-red-600';
                               } else {
-                                circleClass += ' border-muted-foreground';
+                                circleClass +=
+                                  ' border-muted-foreground';
                               }
 
                               return (
@@ -610,6 +751,7 @@ export default function QuizResultsPage() {
                             })}
                           </>
                         ) : (
+                          // short-answer
                           <div className="space-y-2 text-sm">
                             <div
                               className={
