@@ -43,6 +43,7 @@ interface UploadedFile {
   name: string;
   content: string;
   type: string;
+  size: number;
 }
 
 // Extend Question locally so we can attach "section" etc. without touching global types.
@@ -51,6 +52,10 @@ type ExtendedQuestion = Question & {
   isSelected?: boolean;
   isBookmarked?: boolean;
 };
+
+const MAX_FILE_SIZE_MB = 10; // skip ultra-large files on client
+const MAX_COMBINED_TEXT_CHARS = 25000; // cap text sent to Gemini
+const SHARE_BATCH_SIZE = 100; // number of students per /quiz/share request
 
 export default function CreateQuizPage() {
   const location = useLocation();
@@ -71,6 +76,10 @@ export default function CreateQuizPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [sharedLinks, setSharedLinks] = useState<{ email: string; link: string }[]>([]);
   const [linksDialogOpen, setLinksDialogOpen] = useState(false);
+
+  // NEW: track currently saved quizId to avoid duplicate saves
+  const [currentQuizId, setCurrentQuizId] = useState<string | null>(null);
+  const [shareProgress, setShareProgress] = useState<{ current: number; total: number } | null>(null);
 
   useEffect(() => {
     // Fetch students for sharing
@@ -100,6 +109,17 @@ export default function CreateQuizPage() {
 
     for (const file of fileArray) {
       try {
+        // Skip ultra-large files that will kill the browser
+        const sizeMb = file.size / (1024 * 1024);
+        if (sizeMb > MAX_FILE_SIZE_MB) {
+          toast.error(
+            `${file.name} is ${sizeMb.toFixed(
+              1
+            )}MB which is too large to process in the browser (limit ${MAX_FILE_SIZE_MB}MB).`
+          );
+          continue;
+        }
+
         let content = '';
 
         if (isPDFFile(file)) {
@@ -119,6 +139,7 @@ export default function CreateQuizPage() {
           name: file.name,
           content,
           type: file.type,
+          size: file.size,
         });
 
         toast.success(`${file.name} loaded successfully`);
@@ -136,8 +157,39 @@ export default function CreateQuizPage() {
     toast.success('File removed');
   };
 
+  // Build combined text for Gemini, with truncation so we don't blow up the browser or tokens
+  const buildCombinedTextForAI = (): { text: string; truncated: boolean } => {
+    let combined = '';
+    let truncated = false;
+
+    for (const f of uploadedFiles) {
+      if (combined.length >= MAX_COMBINED_TEXT_CHARS) {
+        truncated = true;
+        break;
+      }
+      const remaining = MAX_COMBINED_TEXT_CHARS - combined.length;
+      const slice = f.content.slice(0, remaining);
+      combined += slice + '\n\n';
+      if (slice.length < f.content.length) {
+        truncated = true;
+        break;
+      }
+    }
+
+    if (combined.length < MAX_COMBINED_TEXT_CHARS && moduleText.trim()) {
+      const remaining = MAX_COMBINED_TEXT_CHARS - combined.length;
+      const slice = moduleText.slice(0, remaining);
+      combined += slice;
+      if (slice.length < moduleText.length) {
+        truncated = true;
+      }
+    }
+
+    return { text: combined.trim(), truncated };
+  };
+
   const handleGenerateQuestions = async (aiPrompt?: string) => {
-    const combinedText = uploadedFiles.map((f) => f.content).join('\n\n') + '\n\n' + moduleText;
+    const { text: combinedText, truncated } = buildCombinedTextForAI();
 
     if (!combinedText.trim()) {
       toast.error('Please upload files or paste notes');
@@ -150,12 +202,20 @@ export default function CreateQuizPage() {
       return;
     }
 
+    if (truncated) {
+      toast.info(
+        'Content was very large. Only the first part was used for AI generation to keep things fast and stable.'
+      );
+    }
+
     setGenerating(true);
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
       if (!apiKey) {
-        toast.error('Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env file.');
+        toast.error(
+          'Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env file.'
+        );
         setGenerating(false);
         return;
       }
@@ -175,6 +235,9 @@ export default function CreateQuizPage() {
       }));
 
       setQuestions(extended);
+      // New quiz content => reset currentQuizId so next save/share creates a fresh quiz
+      setCurrentQuizId(null);
+
       toast.success(`Successfully generated ${generatedQuestions?.length || 0} AI-powered questions!`);
     } catch (error) {
       console.error('Error generating questions:', error);
@@ -186,11 +249,14 @@ export default function CreateQuizPage() {
 
   const handleUpdateQuestion = (updatedQuestion: ExtendedQuestion) => {
     setQuestions((prev) => prev.map((q) => (q.id === updatedQuestion.id ? updatedQuestion : q)));
+    // Editing questions means the saved quiz (if any) is now outdated
+    setCurrentQuizId(null);
     toast.success('Question updated');
   };
 
   const handleDeleteQuestion = (id: string) => {
     setQuestions((prev) => prev.filter((q) => q.id !== id));
+    setCurrentQuizId(null);
     toast.success('Question deleted');
   };
 
@@ -228,6 +294,7 @@ export default function CreateQuizPage() {
     setQuestions((prev) =>
       prev.map((q) => (q.id === id ? { ...q, section } : q))
     );
+    setCurrentQuizId(null);
   };
 
   // NEW: manual question creation helpers
@@ -236,9 +303,7 @@ export default function CreateQuizPage() {
     type,
     // @ts-ignore (depending on your Question type shape)
     question: '',
-    // required by Question type
-    answer: '',
-    // basic 4-option MCQ skeleton
+    answer: '', // Add this line to include the answer property
     ...(type === 'mcq' ? { options: ['', '', '', ''] } : {}),
     isBookmarked: false,
     isSelected: true,
@@ -247,6 +312,7 @@ export default function CreateQuizPage() {
 
   const addManualQuestion = (type: 'mcq' | 'short-answer') => {
     setQuestions((prev) => [...prev, createEmptyQuestion(type)]);
+    setCurrentQuizId(null);
     toast.success(`Blank ${type === 'mcq' ? 'MCQ' : 'Short Answer'} question added`);
   };
 
@@ -270,9 +336,8 @@ export default function CreateQuizPage() {
 
   // Save quiz to backend and return quizId (or throw)
   const saveQuizToServer = async (title: string, selectedQuestions: ExtendedQuestion[]) => {
-    const quizPayload: Partial<Quiz> = {
+    const basePayload: Partial<Quiz> = {
       title,
-      // Cast to any to allow extra fields like section
       questions: selectedQuestions as any,
       createdAt: new Date().toISOString(),
       numQuestions: selectedQuestions.length,
@@ -281,11 +346,22 @@ export default function CreateQuizPage() {
       difficulty,
     };
 
+    // If we already have a quizId, we *could* send it to let backend update.
+    // But to avoid duplicate saves from share, we mainly rely on this function
+    // being called only when needed.
+    const quizPayload: Partial<Quiz> = currentQuizId
+      ? { ...(basePayload as any), id: currentQuizId }
+      : basePayload;
+
     const saveRes = await quizAPI.save(quizPayload as Quiz);
-    const quizId = saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id));
+    const quizId =
+      saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id));
+
     if (!quizId) {
       throw new Error('Server did not return quizId');
     }
+
+    setCurrentQuizId(quizId);
     return quizId;
   };
 
@@ -306,7 +382,7 @@ export default function CreateQuizPage() {
     try {
       const quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       toast.success('Quiz saved successfully!');
-      setQuizTitle('');
+      // Do NOT clear quizTitle; keep it for this quiz session.
       return quizId;
     } catch (error: any) {
       console.error('Error saving quiz:', error);
@@ -351,7 +427,7 @@ export default function CreateQuizPage() {
     }
   };
 
-  // Robust share flow: save then share; defensive student -> email mapping; show server errors
+  // Robust share flow with batching: save once (if needed), then send in chunks of 100
   const handleShareQuiz = async () => {
     if (selectedStudents.length === 0) {
       toast.error('Please select at least one student');
@@ -370,11 +446,18 @@ export default function CreateQuizPage() {
     }
 
     setSaving(true);
-    try {
-      // 1) Save quiz and get quizId
-      const quizId = await saveQuizToServer(quizTitle, selectedQuestions);
+    setShareProgress(null);
 
-      // 2) Defensive mapping: ensure we have an array of emails
+    try {
+      // 1) Ensure quiz is saved; but avoid duplicate create:
+      // - If we already have currentQuizId, reuse it (do not resave).
+      // - If no quizId yet, save once now.
+      let quizId = currentQuizId;
+      if (!quizId) {
+        quizId = await saveQuizToServer(quizTitle, selectedQuestions);
+      }
+
+      // 2) Build array of valid emails
       let studentEmails = (selectedStudents || []).map((s) => {
         // If s is an email string
         if (typeof s === 'string' && s.includes('@')) return s.trim();
@@ -382,7 +465,8 @@ export default function CreateQuizPage() {
         // If s is a JSON stringified object
         try {
           const parsed = JSON.parse(String(s));
-          if (parsed && typeof parsed === 'object' && parsed.email) return String(parsed.email).trim();
+          if (parsed && typeof parsed === 'object' && parsed.email)
+            return String(parsed.email).trim();
         } catch (_) {
           /* ignore */
         }
@@ -408,34 +492,56 @@ export default function CreateQuizPage() {
         return;
       }
 
-      const sharePayload: {
-        quizId: string;
-        studentEmails: string[];
-        links: Array<{ email: string; link: string; token: string }>;
-      } = {
-        quizId,
-        studentEmails,
-        links: [],
-      };
+      const total = studentEmails.length;
+      const allLinks: Array<{ email: string; link: string }> = [];
 
-      console.debug('sharePayload ->', sharePayload);
+      // 3) Batch the share calls to avoid one giant payload
+      for (let i = 0; i < studentEmails.length; i += SHARE_BATCH_SIZE) {
+        const batchEmails = studentEmails.slice(i, i + SHARE_BATCH_SIZE);
 
-      const result = await quizAPI.share(sharePayload as any);
+        setShareProgress({
+          current: Math.min(i + SHARE_BATCH_SIZE, total),
+          total,
+        });
 
-      console.debug('share result ->', result);
+        const sharePayload: {
+          quizId: string;
+          studentEmails: string[];
+          links: Array<{ email: string; link: string; token: string }>;
+        } = {
+          quizId,
+          studentEmails: batchEmails,
+          links: [],
+        };
 
-      const links = Array.isArray(result.links) ? result.links : [];
-      setSharedLinks(links.map((l: any) => ({ email: l.email, link: l.link })));
+        const result = await quizAPI.share(sharePayload as any);
+        const links = Array.isArray(result.links) ? result.links : [];
 
-      if (links.length === 0) {
-        toast('Share completed but no links were returned. Check server response in console/network.');
-        console.warn('Share result had no links:', result);
+        links.forEach((l: any) => {
+          if (l && l.email && l.link) {
+            allLinks.push({ email: l.email, link: l.link });
+          }
+        });
+      }
+
+      setSharedLinks(allLinks);
+
+      if (allLinks.length === 0) {
+        toast(
+          'Share completed but no links were returned. Check server response in console/network.'
+        );
+        console.warn('Share result had no links.');
       } else {
-        toast.success(`Quiz links generated for ${links.length} students`);
+        toast.success(
+          `Quiz links generated for ${allLinks.length} student(s) in ${Math.ceil(
+            total / SHARE_BATCH_SIZE
+          )} batch(es).`
+        );
         setLinksDialogOpen(true);
       }
 
       setShareDialogOpen(false);
+      setShareProgress(null);
     } catch (err: any) {
       console.error('Error sharing quiz:', err);
 
@@ -449,7 +555,9 @@ export default function CreateQuizPage() {
               .map((f: any) => `${f.email || f}: ${f.reason}`)
               .join('; ')) ||
           (Array.isArray(data?.failedSend) &&
-            data.failedSend.map((f: any) => f.reason || JSON.stringify(f)).join('; ')) ||
+            data.failedSend
+              .map((f: any) => f.reason || JSON.stringify(f))
+              .join('; ')) ||
           JSON.stringify(data);
         toast.error(`Share failed: ${serverMsg}`);
       } else {
@@ -457,6 +565,7 @@ export default function CreateQuizPage() {
       }
     } finally {
       setSaving(false);
+      setShareProgress(null);
     }
   };
 
@@ -518,7 +627,7 @@ export default function CreateQuizPage() {
                       Click to upload or drag and drop
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      TXT, MD, PDF files supported (multiple files allowed)
+                      TXT, MD, PDF files supported (multiple files allowed, ≤ {MAX_FILE_SIZE_MB}MB each)
                     </p>
                   </div>
                   <input
@@ -545,6 +654,9 @@ export default function CreateQuizPage() {
                         className="pl-3 pr-1 py-1 text-xs flex items-center gap-2 hover-scale"
                       >
                         <span className="truncate max-w-[150px]">{file.name}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {(file.size / (1024 * 1024)).toFixed(1)}MB
+                        </span>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -566,7 +678,10 @@ export default function CreateQuizPage() {
                 <Textarea
                   id="module-text"
                   value={moduleText}
-                  onChange={(e) => setModuleText(e.target.value)}
+                  onChange={(e) => {
+                    setModuleText(e.target.value);
+                    setCurrentQuizId(null);
+                  }}
                   placeholder="Paste your module content here..."
                   className="mt-2 min-h-[120px] md:min-h-[150px] text-xs md:text-sm"
                 />
@@ -731,7 +846,7 @@ export default function CreateQuizPage() {
         </div>
       </div>
 
-      {/* Generated / Manual Questions */}
+      {/* Questions */}
       {questions.length > 0 && (
         <>
           <Card className="shadow-card">
@@ -803,7 +918,10 @@ export default function CreateQuizPage() {
                 <Input
                   id="quiz-title"
                   value={quizTitle}
-                  onChange={(e) => setQuizTitle(e.target.value)}
+                  onChange={(e) => {
+                    setQuizTitle(e.target.value);
+                    setCurrentQuizId(null);
+                  }}
                   placeholder="e.g., Module 1 Assessment"
                   className="mt-2"
                 />
@@ -840,7 +958,7 @@ export default function CreateQuizPage() {
                       Share Quiz
                     </Button>
                   </DialogTrigger>
-                  {/* Dialog alignment improved: responsive width and centered content */}
+                  {/* Dialog alignment & progress */}
                   <DialogContent className="sm:max-w-4xl w-[95vw] max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
                       <DialogTitle>Share Quiz with Students</DialogTitle>
@@ -855,13 +973,18 @@ export default function CreateQuizPage() {
                         onSelectionChange={setSelectedStudents}
                         showCheckboxes
                       />
+                      {shareProgress && (
+                        <p className="text-xs text-muted-foreground">
+                          Sharing... {shareProgress.current}/{shareProgress.total} students processed
+                        </p>
+                      )}
                       <div className="flex justify-end">
                         <Button
                           onClick={handleShareQuiz}
-                          disabled={selectedStudents.length === 0}
+                          disabled={selectedStudents.length === 0 || saving}
                           className="w-full sm:w-auto gradient-primary"
                         >
-                          Generate &amp; Share Links ({selectedStudents.length} students)
+                          {saving ? 'Generating & Sharing...' : `Generate & Share Links (${selectedStudents.length} students)`}
                         </Button>
                       </div>
                     </div>

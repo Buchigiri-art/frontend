@@ -32,7 +32,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
-import axios from 'axios';
+import api from '@/services/api'; // ✅ use configured axios instance
 import {
   Dialog,
   DialogContent,
@@ -40,8 +40,6 @@ import {
   DialogTitle as DialogTitleUI,
   DialogDescription,
 } from '@/components/ui/dialog';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 interface QuizAttempt {
   _id: string;
@@ -143,22 +141,13 @@ export default function QuizResultsPage() {
   }, [autoRefresh, fetchResults]);
 
   const handleDownloadExcel = async (detailed: boolean = false) => {
+    if (!quizId) return;
     setDownloading(true);
     try {
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('token='))
-        ?.split('=')[1];
-
-      const response = await axios.get(
-        `${API_URL}/quiz/${quizId}/results/download${
-          detailed ? '?detailed=true' : ''
-        }`,
+      // ✅ use your configured axios instance
+      const response = await api.get(
+        `/quiz/${quizId}/results/download${detailed ? '?detailed=true' : ''}`,
         {
-          headers: {
-            Cookie: `token=${token}`,
-          },
-          withCredentials: true,
           responseType: 'blob',
         }
       );
@@ -168,7 +157,9 @@ export default function QuizResultsPage() {
       link.href = url;
       link.setAttribute(
         'download',
-        `${quizTitle.replace(/[^a-z0-9]/gi, '_')}_results.xlsx`
+        `${quizTitle.replace(/[^a-z0-9]/gi, '_')}_results${
+          detailed ? '_detailed' : ''
+        }.xlsx`
       );
       document.body.appendChild(link);
       link.click();
@@ -500,7 +491,6 @@ export default function QuizResultsPage() {
                   );
                   const isMcq = q.type === 'mcq' && options.length > 0;
 
-                  // ✅ use backend isCorrect OR computed equality
                   const isCorrect =
                     q.isCorrect ||
                     (isMcq &&
@@ -588,7 +578,6 @@ export default function QuizResultsPage() {
                                 optionClass += ' border-muted bg-background';
                               }
 
-                              // Circle style
                               let circleClass =
                                 'h-4 w-4 rounded-full border flex items-center justify-center';
                               if (isCorrectOption) {
@@ -621,7 +610,6 @@ export default function QuizResultsPage() {
                             })}
                           </>
                         ) : (
-                          // short-answer
                           <div className="space-y-2 text-sm">
                             <div
                               className={

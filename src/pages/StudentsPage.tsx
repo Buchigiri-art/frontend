@@ -30,12 +30,18 @@ import { studentsAPI } from '@/services/api';
 import type { Student } from '@/types';
 import { toast } from 'sonner';
 
+const UPLOAD_BATCH_SIZE = 500; // how many students per /students/upload call
+
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [uploadProgress, setUploadProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
 
   // ---- EDIT DIALOG STATE ----
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
@@ -83,7 +89,7 @@ export default function StudentsPage() {
     const fetchStudents = async () => {
       try {
         const data = await studentsAPI.getAll();
-        setStudents(data);
+        setStudents(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error('Error fetching students:', error);
         toast.error('Failed to load students');
@@ -102,6 +108,7 @@ export default function StudentsPage() {
     setUploading(true);
     setErrors([]);
     setSuccess(false);
+    setUploadProgress(null);
 
     try {
       const result = await parseExcelFile(file);
@@ -112,16 +119,31 @@ export default function StudentsPage() {
         return;
       }
 
-      // Upload to backend
-      await studentsAPI.upload(result.students);
+      const allStudents: Student[] = result.students || [];
+      const total = allStudents.length;
 
-      // Refresh student list
+      if (total === 0) {
+        toast.error('No valid students found in file');
+        return;
+      }
+
+      // Upload in batches to avoid huge single request
+      for (let i = 0; i < total; i += UPLOAD_BATCH_SIZE) {
+        const chunk = allStudents.slice(i, i + UPLOAD_BATCH_SIZE);
+        setUploadProgress({
+          processed: Math.min(i + chunk.length, total),
+          total,
+        });
+
+        await studentsAPI.upload(chunk);
+      }
+
+      // Refresh student list once at the end
       const updatedStudents = await studentsAPI.getAll();
-      setStudents(updatedStudents);
+      setStudents(Array.isArray(updatedStudents) ? updatedStudents : []);
+
       setSuccess(true);
-      toast.success(
-        `Successfully uploaded ${result.students.length} student records`
-      );
+      toast.success(`Successfully uploaded ${total} student records`);
 
       // Clear file input
       e.target.value = '';
@@ -131,6 +153,7 @@ export default function StudentsPage() {
       setErrors([error instanceof Error ? error.message : 'Upload failed']);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -172,7 +195,7 @@ export default function StudentsPage() {
         usn: editForm.usn.trim(),
         email: editForm.email.trim(),
         branch: editForm.branch.trim(),
-        // your schema has year/semester as String, but this keeps compatibility
+        // keep compatibility with possible string/number variants
         year: editForm.year ? (editForm.year as any) : (editingStudent as any).year,
         semester: editForm.semester
           ? (editForm.semester as any)
@@ -326,7 +349,16 @@ export default function StudentsPage() {
             <Alert className="border-green-200 bg-green-50">
               <CheckCircle2 className="h-4 w-4 text-green-600" />
               <AlertDescription className="text-green-800">
-                Students uploaded successfully! {students.length} records added.
+                Students uploaded successfully! {students.length} records in the system.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {uploadProgress && (
+            <Alert className="border-blue-200 bg-blue-50">
+              <AlertCircle className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-blue-800 text-sm">
+                Uploading in batches... {uploadProgress.processed}/{uploadProgress.total} students processed
               </AlertDescription>
             </Alert>
           )}
@@ -393,7 +425,7 @@ export default function StudentsPage() {
               Download Sample
             </Button>
 
-            {/* NEW: Manual Insert Button */}
+            {/* Manual Insert Button */}
             <Button
               variant="secondary"
               onClick={openAddDialog}

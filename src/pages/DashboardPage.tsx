@@ -14,25 +14,46 @@ type BookmarkItem = {
 };
 
 export default function DashboardPage() {
-  const [students, setStudents] = useState<any[]>([]);
-  const [savedQuizzes, setSavedQuizzes] = useState<Quiz[]>([]);
-  const [bookmarkedQuestions, setBookmarkedQuestions] = useState<BookmarkItem[]>([]);
+  const [totalStudents, setTotalStudents] = useState(0);
+  const [totalQuizzes, setTotalQuizzes] = useState(0);
+  const [totalBookmarks, setTotalBookmarks] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [recentQuizzes, setRecentQuizzes] = useState<Quiz[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [studentsData, quizzesData, bookmarksData] = await Promise.all([
-          studentsAPI.getAll(),   // returns Student[]
-          quizAPI.getAll(),       // returns Quiz[]
-          bookmarksAPI.getAll(),  // returns Bookmark[]
+          studentsAPI.getAll(),   // Student[]
+          quizAPI.getAll(),       // Quiz[]
+          bookmarksAPI.getAll(),  // Bookmark[]
         ]);
 
-        setStudents(Array.isArray(studentsData) ? studentsData : []);
-        setSavedQuizzes(Array.isArray(quizzesData) ? quizzesData : []);
+        const studentsArr = Array.isArray(studentsData) ? studentsData : [];
+        const quizzesArr = Array.isArray(quizzesData) ? quizzesData : [];
+        const bookmarksArr = Array.isArray(bookmarksData) ? bookmarksData : [];
 
-        // bookmarksAPI.getAll() already returns `bookmarks`, not { bookmarks: [...] }
-        setBookmarkedQuestions(Array.isArray(bookmarksData) ? bookmarksData : []);
+        setTotalStudents(studentsArr.length);
+        setTotalQuizzes(quizzesArr.length);
+        setTotalBookmarks(bookmarksArr.length);
+
+        // Safely compute total questions
+        const totalQ = quizzesArr.reduce((acc, quiz: any) => {
+          const count = Array.isArray(quiz.questions) ? quiz.questions.length : 0;
+          return acc + count;
+        }, 0);
+        setTotalQuestions(totalQ);
+
+        // Keep only a small recent slice to render (avoid rendering thousands)
+        // Sort by createdAt desc if available
+        const sortedQuizzes = [...quizzesArr].sort((a: any, b: any) => {
+          const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return db - da;
+        });
+
+        setRecentQuizzes(sortedQuizzes.slice(0, 5));
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
         toast.error('Failed to load dashboard data');
@@ -40,22 +61,13 @@ export default function DashboardPage() {
         setLoading(false);
       }
     };
-
     fetchData();
   }, []);
-
-  // Safely compute total questions across all quizzes
-  const totalQuestions = savedQuizzes.reduce((acc, quiz) => {
-    const count = Array.isArray((quiz as any).questions)
-      ? (quiz as any).questions.length
-      : 0;
-    return acc + count;
-  }, 0);
 
   const stats = [
     {
       title: 'Total Students',
-      value: students.length,
+      value: totalStudents,
       icon: Users,
       description: 'Uploaded student records',
       color: 'text-blue-600',
@@ -63,7 +75,7 @@ export default function DashboardPage() {
     },
     {
       title: 'Quizzes Created',
-      value: savedQuizzes.length,
+      value: totalQuizzes,
       icon: FileText,
       description: 'Saved quizzes in the system',
       color: 'text-purple-600',
@@ -71,7 +83,7 @@ export default function DashboardPage() {
     },
     {
       title: 'Bookmarked Items',
-      value: bookmarkedQuestions.length,
+      value: totalBookmarks,
       icon: Bookmark,
       description: 'Saved questions & quizzes',
       color: 'text-amber-600',
@@ -175,24 +187,24 @@ export default function DashboardPage() {
       </Card>
 
       {/* Recent Activity */}
-      {savedQuizzes.length > 0 && (
+      {recentQuizzes.length > 0 && (
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle>Recent Quizzes</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {savedQuizzes.slice(0, 5).map((quiz) => {
-                const questionsCount = Array.isArray((quiz as any).questions)
-                  ? (quiz as any).questions.length
+              {recentQuizzes.map((quiz: any) => {
+                const questionsCount = Array.isArray(quiz.questions)
+                  ? quiz.questions.length
                   : 0;
-                const createdAt = (quiz as any).createdAt
-                  ? new Date((quiz as any).createdAt).toLocaleDateString()
+                const createdAt = quiz.createdAt
+                  ? new Date(quiz.createdAt).toLocaleDateString()
                   : 'Unknown date';
 
                 return (
                   <div
-                    key={(quiz as any).id || (quiz as any)._id || quiz.title}
+                    key={quiz.id || quiz._id || quiz.title}
                     className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
                   >
                     <div>
