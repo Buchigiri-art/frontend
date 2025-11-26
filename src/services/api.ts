@@ -19,14 +19,25 @@ const api = axios.create({
 
 // Quiz API
 export const quizAPI = {
-  save: async (quiz: Partial<Quiz>): Promise<{ success: boolean; quizId: string; quiz?: any }> => {
+  save: async (
+    quiz: Partial<Quiz>
+  ): Promise<{ success: boolean; quizId: string; quiz?: any }> => {
     const response = await api.post('/quiz/save', quiz);
     return response.data;
   },
 
+  // NOTE: backend can also return alreadySent / failed / invalid, and may sometimes use 400
+  // even when success:true. We'll handle that in the frontend via safeShareCall.
   share: async (
     shareData: QuizShare
-  ): Promise<{ success: boolean; message: string; links: QuizShare['links'] }> => {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    links: QuizShare['links'];
+    alreadySent?: { email: string; link: string; token?: string }[];
+    failed?: any[];
+    invalid?: any[];
+  }> => {
     const response = await api.post('/quiz/share', shareData);
     return response.data;
   },

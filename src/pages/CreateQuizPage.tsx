@@ -24,7 +24,7 @@ import { AIChatInterface } from '@/components/AIChatInterface';
 import { generateQuestions } from '@/services/gemini';
 import { extractTextFromPDF, isPDFFile } from '@/services/pdfService';
 import { quizAPI, studentsAPI, bookmarksAPI } from '@/services/api';
-import { Question, Quiz, Student } from '@/types';
+import { Question, Quiz, Student, QuizShare } from '@/types';
 import { toast } from 'sonner';
 import { useLocation } from 'react-router-dom';
 import {
@@ -391,6 +391,29 @@ export default function CreateQuizPage() {
     }
   };
 
+  // ---- safeShareCall: handles 400 + success:true case from backend ----
+  const safeShareCall = async (payload: QuizShare | any) => {
+    try {
+      const res = await quizAPI.share(payload);
+      return res;
+    } catch (err: any) {
+      const data = err?.response?.data;
+      const status = err?.response?.status;
+
+      // Your backend sometimes returns 400 with { success: true, message, alreadySent, ... }
+      if (status === 400 && data && data.success) {
+        console.warn(
+          '[quiz/share] 400 with success:true – treating as soft success. Response:',
+          data,
+        );
+        return data;
+      }
+
+      // Real error -> rethrow
+      throw err;
+    }
+  };
+
   // Robust share flow with batching: save once (if needed), then send in chunks of 100
   const handleShareQuiz = async () => {
     if (selectedStudents.length === 0) {
@@ -420,29 +443,33 @@ export default function CreateQuizPage() {
       }
 
       // 2) Build array of valid emails
-      let studentEmails = (selectedStudents || []).map((s) => {
-        if (typeof s === 'string' && s.includes('@')) return s.trim();
+      let studentEmails = (selectedStudents || [])
+        .map((s) => {
+          if (typeof s === 'string' && s.includes('@')) return s.trim();
 
-        try {
-          const parsed = JSON.parse(String(s));
-          if (parsed && typeof parsed === 'object' && parsed.email)
-            return String(parsed.email).trim();
-        } catch (_) {
-          /* ignore */
-        }
+          // Some tables pass serialized objects; try to parse
+          try {
+            const parsed = JSON.parse(String(s));
+            if (parsed && typeof parsed === 'object' && parsed.email) {
+              return String(parsed.email).trim();
+            }
+          } catch (_) {
+            /* ignore */
+          }
 
-        const found = students.find(
-          (st) =>
-            (st as any)._id === s ||
-            (st as any).id === s ||
-            st.email === s
-        );
-        return found ? found.email : '';
-      }).filter(Boolean);
+          const found = students.find(
+            (st) =>
+              (st as any)._id === s ||
+              (st as any).id === s ||
+              st.email === s
+          );
+          return found ? found.email : '';
+        })
+        .filter(Boolean);
 
-      // remove duplicates and simple invalids
+      // de-duplicate
       studentEmails = Array.from(new Set(studentEmails)).filter(
-        (email) => typeof email === 'string' && email.includes('@')
+        (email) => typeof email === 'string' && email.includes('@'),
       );
 
       if (studentEmails.length === 0) {
@@ -463,20 +490,23 @@ export default function CreateQuizPage() {
           total,
         });
 
-        const sharePayload: {
-          quizId: string;
-          studentEmails: string[];
-          links: Array<{ email: string; link: string; token: string }>;
-        } = {
+        const sharePayload: QuizShare = {
           quizId,
           studentEmails: batchEmails,
           links: [],
         };
 
-        const result = await quizAPI.share(sharePayload as any);
-        const links = Array.isArray(result.links) ? result.links : [];
+        // IMPORTANT: use safeShareCall instead of quizAPI.share directly
+        const result: any = await safeShareCall(sharePayload);
 
-        links.forEach((l: any) => {
+        // result format from backend:
+        // { success, message, links: [...], alreadySent: [...], failed: [...], invalid: [...] }
+        const linksFromResult = [
+          ...(Array.isArray(result.links) ? result.links : []),
+          ...(Array.isArray(result.alreadySent) ? result.alreadySent : []),
+        ];
+
+        linksFromResult.forEach((l: any) => {
           if (l && l.email && l.link) {
             allLinks.push({ email: l.email, link: l.link });
           }
@@ -486,15 +516,16 @@ export default function CreateQuizPage() {
       setSharedLinks(allLinks);
 
       if (allLinks.length === 0) {
+        // No actual links came back, even though backend says success:true
         toast(
-          'Share completed but no links were returned. Check server response in console/network.'
+          'Share completed but no links were returned. Check server response in console/network.',
         );
-        console.warn('Share result had no links.');
+        console.warn('Share result had no links. Check alreadySent/links format on backend.');
       } else {
         toast.success(
-          `Quiz links generated for ${allLinks.length} student(s) in ${Math.ceil(
-            total / SHARE_BATCH_SIZE
-          )} batch(es).`
+          `Quiz links available for ${allLinks.length} student(s) in ${Math.ceil(
+            total / SHARE_BATCH_SIZE,
+          )} batch(es).`,
         );
         setLinksDialogOpen(true);
       }
@@ -510,13 +541,9 @@ export default function CreateQuizPage() {
         const serverMsg =
           data?.message ||
           (Array.isArray(data?.failedValidation) &&
-            data.failedValidation
-              .map((f: any) => `${f.email || f}: ${f.reason}`)
-              .join('; ')) ||
+            data.failedValidation.map((f: any) => `${f.email || f}: ${f.reason}`).join('; ')) ||
           (Array.isArray(data?.failedSend) &&
-            data.failedSend
-              .map((f: any) => f.reason || JSON.stringify(f))
-              .join('; ')) ||
+            data.failedSend.map((f: any) => f.reason || JSON.stringify(f)).join('; ')) ||
           JSON.stringify(data);
         toast.error(`Share failed: ${serverMsg}`);
       } else {
