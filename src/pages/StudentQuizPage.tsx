@@ -241,7 +241,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3). Split-screen or half-screen on any device will immediately auto-submit as cheated.',
+          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit) gives warnings (max 3). Split-screen or half-screen on any device auto-submits as cheated.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -414,9 +414,11 @@ export default function StudentQuizPage() {
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
     window.addEventListener('focus', onWindowFocus, true);
+    window.addEventListener('blur', onWindowBlur, true); // focus loss
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
+    window.addEventListener('pagehide', onPageHide, true); // mobile / iOS
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
@@ -433,9 +435,11 @@ export default function StudentQuizPage() {
 
     document.removeEventListener('visibilitychange', onVisibilityChange, true);
     window.removeEventListener('focus', onWindowFocus, true);
+    window.removeEventListener('blur', onWindowBlur, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
+    window.removeEventListener('pagehide', onPageHide, true);
 
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
@@ -468,6 +472,23 @@ export default function StudentQuizPage() {
       await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
     } catch (err) {
       console.warn('Flag send failed:', err);
+    }
+  };
+
+  // Unified focus-loss handler:
+  // - always sends a warning
+  // - if warnings >= MAX_WARNINGS -> auto-submit as cheated
+  // - otherwise starts the 10s away timer with the given stillAwayCheck
+  const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
+    if (!guard()) return;
+
+    sendFlag(reasonBase);
+    const count = localWarningsRef.current;
+
+    if (count >= MAX_WARNINGS) {
+      handleAutoSubmitAsCheat(`${reasonBase}:max-warnings`);
+    } else {
+      startLeaveTimer(reasonBase, stillAwayCheck);
     }
   };
 
@@ -514,7 +535,7 @@ export default function StudentQuizPage() {
     }, 0);
   };
 
-  // Tab change / minimize / app switch
+  // Tab change / minimize / app switch (page hidden)
   const onVisibilityChange = () => {
     if (!guard()) return;
 
@@ -531,23 +552,32 @@ export default function StudentQuizPage() {
       if (document.visibilityState === 'visible') return;
       if (Date.now() - firedAt < 250) return; // ignore tiny glitches
 
-      // Immediate warning (1st, 2nd, 3rd, etc.)
-      sendFlag('visibility:hidden');
-      const count = localWarningsRef.current;
-
-      // 3rd warning -> immediate auto-submit
-      if (count >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat('visibility:hidden:max-warnings');
-      } else {
-        // Also start the 10-second away timer (cumulative)
-        startLeaveTimer('visibility:hidden', () => document.visibilityState !== 'visible');
-      }
+      // Treat as focus-loss violation
+      handleFocusLostViolation('visibility:hidden', () => document.visibilityState !== 'visible');
     }, 300);
   };
 
   const onWindowFocus = () => {
     if (!guard()) return;
     clearLeaveTimer();
+  };
+
+  // Window lost focus (switch app, pull up bottom nav, alt+tab, click on other window, etc.)
+  const onWindowBlur = () => {
+    if (!guard()) return;
+
+    const firedAt = Date.now();
+
+    // Small debounce to ignore micro-blips
+    setTimeout(() => {
+      if (!guard()) return;
+
+      // If focus came back, ignore
+      if (document.hasFocus && document.hasFocus()) return;
+      if (Date.now() - firedAt < 250) return;
+
+      handleFocusLostViolation('window:blur', () => !(document.hasFocus && document.hasFocus()));
+    }, 300);
   };
 
   // Fullscreen exit / re-enter
@@ -557,20 +587,20 @@ export default function StudentQuizPage() {
     const isFs = !!document.fullscreenElement;
 
     if (!isFs) {
-      // Exited fullscreen
-      sendFlag('fullscreen:exited');
-      const count = localWarningsRef.current;
-      if (count >= MAX_WARNINGS) {
-        // 3rd warning -> immediate auto-submit
-        handleAutoSubmitAsCheat('fullscreen:exited:max-warnings');
-      } else {
-        // Use the same 10s cumulative budget for staying out of fullscreen
-        startLeaveTimer('fullscreen:exited', () => !document.fullscreenElement);
-      }
+      // Exited fullscreen => focus-loss violation
+      handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     } else {
       // Entered fullscreen again – stop leave timer and deduct used time
       clearLeaveTimer();
     }
+  };
+
+  // iOS / mobile navigation away
+  const onPageHide = (_e: Event) => {
+    if (!guard()) return;
+
+    // pagehide almost always means it's not visible / app in background
+    handleFocusLostViolation('pagehide', () => document.visibilityState !== 'visible');
   };
 
   const onCopyAttempt = (e: ClipboardEvent) => {
@@ -752,11 +782,11 @@ export default function StudentQuizPage() {
             <div>
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
-                Monitoring is enabled. If you minimize, switch tabs, or exit fullscreen,
-                you get a warning. After 3 warnings, the quiz is blocked and auto-submitted.
-                Leaving the quiz screen or exiting fullscreen uses your 10-second away budget;
-                once that is exhausted, the quiz is auto-submitted even if warnings are less
-                than 3.
+                Monitoring is enabled. Any time this quiz loses focus or goes behind
+                another app/tab, you get a warning. After 3 warnings, the quiz is blocked
+                and auto-submitted. Leaving the quiz screen or exiting fullscreen uses your
+                10-second away budget; once that is exhausted, the quiz is auto-submitted
+                even if warnings are less than 3.
                 <span className="font-semibold">
                   {' '}
                   On both computer and phone, if the quiz uses only part of the screen
