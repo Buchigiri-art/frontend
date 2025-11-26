@@ -18,7 +18,7 @@ const LEAVE_BUDGET_MS = 10000; // 10 seconds total budget across all leaves
 
 // STRICT SPLIT-SCREEN DETECTION (desktop + mobile):
 // If width OR height of window is less than this fraction of the full screen
-// (e.g., 0.8 => 80%), we treat it as split-screen and auto-submit.
+// we treat it like focus-loss and apply warning + 10s budget.
 const SPLIT_DIM_THRESHOLD = 0.8;
 
 // Detect mobile – currently same behavior, but kept in case you want future tweaks
@@ -68,7 +68,7 @@ export default function StudentQuizPage() {
 
   // Anti-cheat / monitoring
   const [warningCount, setWarningCount] = useState(0);
-  const [isCheated, setIsCheeted] = useState(false);
+  const [isCheated, setIsCheated] = useState(false);
   const localWarningsRef = useRef<number>(0);
   const lastWarnAtRef = useRef<number>(0);
   const tokenRef = useRef<string | undefined>(token);
@@ -241,7 +241,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit) gives warnings (max 3). Split-screen or half-screen on any device auto-submits as cheated.',
+          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit, split-screen) gives warnings (max 3). Total away time allowed is 10 seconds; after that, the quiz is auto-submitted even if warnings are less than 3.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -293,7 +293,7 @@ export default function StudentQuizPage() {
 
     quizActiveRef.current = false;
     quizSubmittedRef.current = true;
-    setIsCheeted(true);
+    setIsCheated(true);
     setQuizSubmitted(true);
 
     try {
@@ -498,44 +498,37 @@ export default function StudentQuizPage() {
     return true;
   };
 
-  // STRICT: Window resize / split-screen detection (desktop + mobile) -> direct auto-submit
+  // STRICT: Window resize / split-screen detection (desktop + mobile)
+  // Uses the SAME warning + 10s cumulative budget logic as other focus-loss events.
   const onWindowResize = () => {
     if (!guard()) return;
 
     try {
-      // Use physical screen size to compare ratios – works on desktop and mobile.
       const screenWidth = window.screen.width || window.innerWidth;
       const screenHeight = window.screen.height || window.innerHeight;
-
       if (!screenWidth || !screenHeight) return;
 
       const widthRatio = window.innerWidth / screenWidth;
       const heightRatio = window.innerHeight / screenHeight;
 
-      // If either dimension is significantly smaller than the full screen
-      // (e.g. half-screen side-by-side or top/bottom), treat as split-screen.
+      // If either dimension is significantly smaller than full screen,
+      // treat it as focus-loss style violation (split screen / app over it).
       if (widthRatio < SPLIT_DIM_THRESHOLD || heightRatio < SPLIT_DIM_THRESHOLD) {
-        // Optional: log this as a flag (async, fire-and-forget)
-        awaitFlagForResize(
-          `window:split-screen-or-resize:widthRatio=${widthRatio.toFixed(
-            2,
-          )},heightRatio=${heightRatio.toFixed(2)}`,
-        );
-        handleAutoSubmitAsCheat('window:split-screen-or-resize');
+        handleFocusLostViolation('window:split-screen-or-resize', () => {
+          const sw = window.screen.width || window.innerWidth;
+          const sh = window.screen.height || window.innerHeight;
+          if (!sw || !sh) return false;
+          const wr = window.innerWidth / sw;
+          const hr = window.innerHeight / sh;
+          return wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD;
+        });
       }
     } catch (err) {
       console.warn('Error during resize check', err);
     }
   };
 
-  // helper so we don't make onWindowResize async (event handlers should stay sync)
-  const awaitFlagForResize = (reason: string) => {
-    setTimeout(() => {
-      sendFlag(reason);
-    }, 0);
-  };
-
-  // Tab change / minimize / app switch (page hidden)
+  // Tab change / minimize / app switch
   const onVisibilityChange = () => {
     if (!guard()) return;
 
@@ -562,7 +555,7 @@ export default function StudentQuizPage() {
     clearLeaveTimer();
   };
 
-  // Window lost focus (switch app, pull up bottom nav, alt+tab, click on other window, etc.)
+  // Window lost focus (switch app, alt+tab, click other window, etc.)
   const onWindowBlur = () => {
     if (!guard()) return;
 
@@ -727,7 +720,7 @@ export default function StudentQuizPage() {
             <CardTitle>{isCheated ? 'Quiz Blocked' : 'Quiz Submitted'}</CardTitle>
             <CardDescription>
               {isCheated
-                ? 'Your quiz was blocked due to repeated violations. Contact the instructor if this is in error.'
+                ? 'Your quiz was blocked due to repeated or prolonged violations. Contact the instructor if this is in error.'
                 : 'Thank you — your quiz has been submitted.'}
             </CardDescription>
           </CardHeader>
@@ -783,16 +776,12 @@ export default function StudentQuizPage() {
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. Any time this quiz loses focus or goes behind
-                another app/tab, you get a warning. After 3 warnings, the quiz is blocked
-                and auto-submitted. Leaving the quiz screen or exiting fullscreen uses your
-                10-second away budget; once that is exhausted, the quiz is auto-submitted
-                even if warnings are less than 3.
-                <span className="font-semibold">
-                  {' '}
-                  On both computer and phone, if the quiz uses only part of the screen
-                  (side-by-side or above/below another app), the quiz is immediately
-                  auto-submitted as cheated.
-                </span>
+                another app/tab (including split-screen or partial window), you get a
+                warning. After 3 warnings, the quiz is blocked and auto-submitted. Leaving
+                the quiz screen uses your{' '}
+                <span className="font-semibold">10-second total away budget</span>; once
+                that is exhausted, the quiz is auto-submitted even if warnings are less
+                than 3.
               </p>
             </div>
 
