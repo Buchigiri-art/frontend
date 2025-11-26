@@ -34,9 +34,10 @@ export interface Quiz {
 export interface QuizShare {
   quizId: string;
   studentEmails: string[];
-  links: Array<{
+  links?: Array<{
     email: string;
     link: string;
-    token: string;
+    token?: string;
   }>;
+  forceResend?: boolean;
 }

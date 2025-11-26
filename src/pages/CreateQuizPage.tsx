@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import {
-  Upload,
   FileText,
   Sparkles,
   Download,
@@ -53,7 +52,7 @@ type ExtendedQuestion = Question & {
   isBookmarked?: boolean;
 };
 
-// Removed file-size and text-length caps so we use ALL PDF content
+// Batching for /quiz/share
 const SHARE_BATCH_SIZE = 100; // number of students per /quiz/share request
 
 export default function CreateQuizPage() {
@@ -76,9 +75,11 @@ export default function CreateQuizPage() {
   const [sharedLinks, setSharedLinks] = useState<{ email: string; link: string }[]>([]);
   const [linksDialogOpen, setLinksDialogOpen] = useState(false);
 
-  // NEW: track currently saved quizId to avoid duplicate saves
+  // Track currently saved quizId to avoid duplicate creates
   const [currentQuizId, setCurrentQuizId] = useState<string | null>(null);
-  const [shareProgress, setShareProgress] = useState<{ current: number; total: number } | null>(null);
+  const [shareProgress, setShareProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     // Fetch students for sharing
@@ -182,7 +183,7 @@ export default function CreateQuizPage() {
 
       if (!apiKey) {
         toast.error(
-          'Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env file.'
+          'Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env file.',
         );
         setGenerating(false);
         return;
@@ -206,7 +207,9 @@ export default function CreateQuizPage() {
       // New quiz content => reset currentQuizId so next save/share creates a fresh quiz
       setCurrentQuizId(null);
 
-      toast.success(`Successfully generated ${generatedQuestions?.length || 0} AI-powered questions!`);
+      toast.success(
+        `Successfully generated ${generatedQuestions?.length || 0} AI-powered questions!`,
+      );
     } catch (error) {
       console.error('Error generating questions:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to generate questions.');
@@ -243,7 +246,7 @@ export default function CreateQuizPage() {
       }
 
       setQuestions((prev) =>
-        prev.map((q) => (q.id === id ? { ...q, isBookmarked: newBookmarked } : q))
+        prev.map((q) => (q.id === id ? { ...q, isBookmarked: newBookmarked } : q)),
       );
     } catch (error) {
       console.error('Error toggling bookmark:', error);
@@ -253,19 +256,17 @@ export default function CreateQuizPage() {
 
   const handleToggleSelect = (id: string) => {
     setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, isSelected: !q.isSelected } : q))
+      prev.map((q) => (q.id === id ? { ...q, isSelected: !q.isSelected } : q)),
     );
   };
 
-  // NEW: change section for a question
+  // Change section for a question
   const handleSectionChange = (id: string, section: string) => {
-    setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, section } : q))
-    );
+    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, section } : q)));
     setCurrentQuizId(null);
   };
 
-  // NEW: manual question creation helpers
+  // Manual question creation helpers
   const createEmptyQuestion = (type: 'mcq' | 'short-answer'): ExtendedQuestion => ({
     id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
@@ -319,8 +320,7 @@ export default function CreateQuizPage() {
       : basePayload;
 
     const saveRes = await quizAPI.save(quizPayload as Quiz);
-    const quizId =
-      saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id));
+    const quizId = saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id));
 
     if (!quizId) {
       throw new Error('Server did not return quizId');
@@ -391,30 +391,8 @@ export default function CreateQuizPage() {
     }
   };
 
-  // ---- safeShareCall: handles 400 + success:true case from backend ----
-  const safeShareCall = async (payload: QuizShare | any) => {
-    try {
-      const res = await quizAPI.share(payload);
-      return res;
-    } catch (err: any) {
-      const data = err?.response?.data;
-      const status = err?.response?.status;
-
-      // Your backend sometimes returns 400 with { success: true, message, alreadySent, ... }
-      if (status === 400 && data && data.success) {
-        console.warn(
-          '[quiz/share] 400 with success:true – treating as soft success. Response:',
-          data,
-        );
-        return data;
-      }
-
-      // Real error -> rethrow
-      throw err;
-    }
-  };
-
   // Robust share flow with batching: save once (if needed), then send in chunks of 100
+  // ALWAYS forceResend: true → new token + new email every time
   const handleShareQuiz = async () => {
     if (selectedStudents.length === 0) {
       toast.error('Please select at least one student');
@@ -458,10 +436,7 @@ export default function CreateQuizPage() {
           }
 
           const found = students.find(
-            (st) =>
-              (st as any)._id === s ||
-              (st as any).id === s ||
-              st.email === s
+            (st) => (st as any)._id === s || (st as any).id === s || st.email === s,
           );
           return found ? found.email : '';
         })
@@ -494,17 +469,15 @@ export default function CreateQuizPage() {
           quizId,
           studentEmails: batchEmails,
           links: [],
+          // 👇 IMPORTANT: always request a fresh token + fresh email
+          forceResend: true,
         };
 
-        // IMPORTANT: use safeShareCall instead of quizAPI.share directly
-        const result: any = await safeShareCall(sharePayload);
+        // Backend now always returns 200 + success:true for valid requests
+        const result: any = await quizAPI.share(sharePayload);
 
-        // result format from backend:
-        // { success, message, links: [...], alreadySent: [...], failed: [...], invalid: [...] }
-        const linksFromResult = [
-          ...(Array.isArray(result.links) ? result.links : []),
-          ...(Array.isArray(result.alreadySent) ? result.alreadySent : []),
-        ];
+        // We ONLY care about the fresh links from this call
+        const linksFromResult = Array.isArray(result.links) ? result.links : [];
 
         linksFromResult.forEach((l: any) => {
           if (l && l.email && l.link) {
@@ -516,14 +489,13 @@ export default function CreateQuizPage() {
       setSharedLinks(allLinks);
 
       if (allLinks.length === 0) {
-        // No actual links came back, even though backend says success:true
         toast(
           'Share completed but no links were returned. Check server response in console/network.',
         );
-        console.warn('Share result had no links. Check alreadySent/links format on backend.');
+        console.warn('Share result had no links. Check backend /quiz/share response.');
       } else {
         toast.success(
-          `Quiz links available for ${allLinks.length} student(s) in ${Math.ceil(
+          `Quiz links generated for ${allLinks.length} student(s) in ${Math.ceil(
             total / SHARE_BATCH_SIZE,
           )} batch(es).`,
         );
@@ -961,7 +933,8 @@ export default function CreateQuizPage() {
                       />
                       {shareProgress && (
                         <p className="text-xs text-muted-foreground">
-                          Sharing... {shareProgress.current}/{shareProgress.total} students processed
+                          Sharing... {shareProgress.current}/{shareProgress.total} students
+                          processed
                         </p>
                       )}
                       <div className="flex justify-end">
@@ -1011,11 +984,7 @@ export default function CreateQuizPage() {
             )}
 
             <div className="flex flex-wrap gap-2 justify-end">
-              <Button
-                variant="outline"
-                onClick={copyAllLinks}
-                disabled={sharedLinks.length === 0}
-              >
+              <Button variant="outline" onClick={copyAllLinks} disabled={sharedLinks.length === 0}>
                 <Copy className="h-4 w-4 mr-2" /> Copy All
               </Button>
               <Button
