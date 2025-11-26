@@ -53,8 +53,7 @@ type ExtendedQuestion = Question & {
   isBookmarked?: boolean;
 };
 
-const MAX_FILE_SIZE_MB = 10; // skip ultra-large files on client
-const MAX_COMBINED_TEXT_CHARS = 25000; // cap text sent to Gemini
+// Removed file-size and text-length caps so we use ALL PDF content
 const SHARE_BATCH_SIZE = 100; // number of students per /quiz/share request
 
 export default function CreateQuizPage() {
@@ -109,17 +108,6 @@ export default function CreateQuizPage() {
 
     for (const file of fileArray) {
       try {
-        // Skip ultra-large files that will kill the browser
-        const sizeMb = file.size / (1024 * 1024);
-        if (sizeMb > MAX_FILE_SIZE_MB) {
-          toast.error(
-            `${file.name} is ${sizeMb.toFixed(
-              1
-            )}MB which is too large to process in the browser (limit ${MAX_FILE_SIZE_MB}MB).`
-          );
-          continue;
-        }
-
         let content = '';
 
         if (isPDFFile(file)) {
@@ -157,39 +145,25 @@ export default function CreateQuizPage() {
     toast.success('File removed');
   };
 
-  // Build combined text for Gemini, with truncation so we don't blow up the browser or tokens
-  const buildCombinedTextForAI = (): { text: string; truncated: boolean } => {
+  // Build combined text for Gemini from ALL files and notes (no truncation)
+  const buildCombinedTextForAI = (): string => {
     let combined = '';
-    let truncated = false;
 
+    // Add ALL uploaded file contents
     for (const f of uploadedFiles) {
-      if (combined.length >= MAX_COMBINED_TEXT_CHARS) {
-        truncated = true;
-        break;
-      }
-      const remaining = MAX_COMBINED_TEXT_CHARS - combined.length;
-      const slice = f.content.slice(0, remaining);
-      combined += slice + '\n\n';
-      if (slice.length < f.content.length) {
-        truncated = true;
-        break;
-      }
+      combined += f.content + '\n\n';
     }
 
-    if (combined.length < MAX_COMBINED_TEXT_CHARS && moduleText.trim()) {
-      const remaining = MAX_COMBINED_TEXT_CHARS - combined.length;
-      const slice = moduleText.slice(0, remaining);
-      combined += slice;
-      if (slice.length < moduleText.length) {
-        truncated = true;
-      }
+    // Add pasted notes
+    if (moduleText.trim()) {
+      combined += moduleText;
     }
 
-    return { text: combined.trim(), truncated };
+    return combined.trim();
   };
 
   const handleGenerateQuestions = async (aiPrompt?: string) => {
-    const { text: combinedText, truncated } = buildCombinedTextForAI();
+    const combinedText = buildCombinedTextForAI();
 
     if (!combinedText.trim()) {
       toast.error('Please upload files or paste notes');
@@ -200,12 +174,6 @@ export default function CreateQuizPage() {
     if (isNaN(num) || num < 1 || num > 50) {
       toast.error('Please enter a valid number of questions (1-50)');
       return;
-    }
-
-    if (truncated) {
-      toast.info(
-        'Content was very large. Only the first part was used for AI generation to keep things fast and stable.'
-      );
     }
 
     setGenerating(true);
@@ -303,7 +271,7 @@ export default function CreateQuizPage() {
     type,
     // @ts-ignore (depending on your Question type shape)
     question: '',
-    answer: '', // Add this line to include the answer property
+    answer: '',
     ...(type === 'mcq' ? { options: ['', '', '', ''] } : {}),
     isBookmarked: false,
     isSelected: true,
@@ -346,9 +314,6 @@ export default function CreateQuizPage() {
       difficulty,
     };
 
-    // If we already have a quizId, we *could* send it to let backend update.
-    // But to avoid duplicate saves from share, we mainly rely on this function
-    // being called only when needed.
     const quizPayload: Partial<Quiz> = currentQuizId
       ? { ...(basePayload as any), id: currentQuizId }
       : basePayload;
@@ -382,7 +347,6 @@ export default function CreateQuizPage() {
     try {
       const quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       toast.success('Quiz saved successfully!');
-      // Do NOT clear quizTitle; keep it for this quiz session.
       return quizId;
     } catch (error: any) {
       console.error('Error saving quiz:', error);
@@ -449,9 +413,7 @@ export default function CreateQuizPage() {
     setShareProgress(null);
 
     try {
-      // 1) Ensure quiz is saved; but avoid duplicate create:
-      // - If we already have currentQuizId, reuse it (do not resave).
-      // - If no quizId yet, save once now.
+      // 1) Ensure quiz is saved; but avoid duplicate create
       let quizId = currentQuizId;
       if (!quizId) {
         quizId = await saveQuizToServer(quizTitle, selectedQuestions);
@@ -459,10 +421,8 @@ export default function CreateQuizPage() {
 
       // 2) Build array of valid emails
       let studentEmails = (selectedStudents || []).map((s) => {
-        // If s is an email string
         if (typeof s === 'string' && s.includes('@')) return s.trim();
 
-        // If s is a JSON stringified object
         try {
           const parsed = JSON.parse(String(s));
           if (parsed && typeof parsed === 'object' && parsed.email)
@@ -471,7 +431,6 @@ export default function CreateQuizPage() {
           /* ignore */
         }
 
-        // If s is an id or plain string (maybe id) try to find in students list
         const found = students.find(
           (st) =>
             (st as any)._id === s ||
@@ -495,7 +454,7 @@ export default function CreateQuizPage() {
       const total = studentEmails.length;
       const allLinks: Array<{ email: string; link: string }> = [];
 
-      // 3) Batch the share calls to avoid one giant payload
+      // 3) Batch the share calls
       for (let i = 0; i < studentEmails.length; i += SHARE_BATCH_SIZE) {
         const batchEmails = studentEmails.slice(i, i + SHARE_BATCH_SIZE);
 
@@ -627,7 +586,7 @@ export default function CreateQuizPage() {
                       Click to upload or drag and drop
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      TXT, MD, PDF files supported (multiple files allowed, ≤ {MAX_FILE_SIZE_MB}MB each)
+                      TXT, MD, PDF files supported (multiple files allowed)
                     </p>
                   </div>
                   <input
@@ -984,7 +943,9 @@ export default function CreateQuizPage() {
                           disabled={selectedStudents.length === 0 || saving}
                           className="w-full sm:w-auto gradient-primary"
                         >
-                          {saving ? 'Generating & Sharing...' : `Generate & Share Links (${selectedStudents.length} students)`}
+                          {saving
+                            ? 'Generating & Sharing...'
+                            : `Generate & Share Links (${selectedStudents.length} students)`}
                         </Button>
                       </div>
                     </div>
