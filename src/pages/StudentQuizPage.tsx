@@ -16,9 +16,10 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total budget across all leaves
 
-// STRICT: if the quiz window uses less than this fraction of the screen area,
-// we treat it as split-screen and immediately auto-submit as cheated.
-const MIN_WINDOW_AREA_RATIO = 0.98; // ~98% of screen area, very strict
+// STRICT SPLIT-SCREEN DETECTION (desktop + mobile):
+// If width OR height of window is less than this fraction of the full screen
+// (e.g., 0.8 => 80%), we treat it as split-screen and auto-submit.
+const SPLIT_DIM_THRESHOLD = 0.8;
 
 // Detect mobile – currently same behavior, but kept in case you want future tweaks
 const isMobile =
@@ -240,7 +241,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3).',
+          'Quiz is monitored. Tab-switch/minimize/fullscreen exits will give warnings (max 3). Split-screen or half-screen on any device will immediately auto-submit as cheated.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -420,7 +421,7 @@ export default function StudentQuizPage() {
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
 
-    // STRICT: watch for window resize / split-screen
+    // STRICT: watch for window resize / split-screen (desktop + mobile)
     window.addEventListener('resize', onWindowResize, true);
 
     applyBodyStyles();
@@ -476,29 +477,29 @@ export default function StudentQuizPage() {
     return true;
   };
 
-  // STRICT: Window resize / split-screen detection
+  // STRICT: Window resize / split-screen detection (desktop + mobile) -> direct auto-submit
   const onWindowResize = () => {
     if (!guard()) return;
 
     try {
-      const screenWidth = window.screen.availWidth || window.innerWidth;
-      const screenHeight = window.screen.availHeight || window.innerHeight;
+      // Use physical screen size to compare ratios – works on desktop and mobile.
+      const screenWidth = window.screen.width || window.innerWidth;
+      const screenHeight = window.screen.height || window.innerHeight;
 
       if (!screenWidth || !screenHeight) return;
 
-      const windowArea = window.innerWidth * window.innerHeight;
-      const screenArea = screenWidth * screenHeight;
-      const ratio = windowArea / screenArea;
+      const widthRatio = window.innerWidth / screenWidth;
+      const heightRatio = window.innerHeight / screenHeight;
 
-      // If the quiz window is no longer occupying almost the entire screen,
-      // treat it as split-screen and auto-submit immediately.
-      if (ratio < MIN_WINDOW_AREA_RATIO) {
-        // Optional: send a flag for logging
-        try {
-          awaitFlagForResize(`window:split-screen-or-resize:ratio=${ratio.toFixed(2)}`);
-        } catch {
-          // ignore logging errors
-        }
+      // If either dimension is significantly smaller than the full screen
+      // (e.g. half-screen side-by-side or top/bottom), treat as split-screen.
+      if (widthRatio < SPLIT_DIM_THRESHOLD || heightRatio < SPLIT_DIM_THRESHOLD) {
+        // Optional: log this as a flag (async, fire-and-forget)
+        awaitFlagForResize(
+          `window:split-screen-or-resize:widthRatio=${widthRatio.toFixed(
+            2,
+          )},heightRatio=${heightRatio.toFixed(2)}`,
+        );
         handleAutoSubmitAsCheat('window:split-screen-or-resize');
       }
     } catch (err) {
@@ -508,7 +509,6 @@ export default function StudentQuizPage() {
 
   // helper so we don't make onWindowResize async (event handlers should stay sync)
   const awaitFlagForResize = (reason: string) => {
-    // fire-and-forget
     setTimeout(() => {
       sendFlag(reason);
     }, 0);
@@ -756,8 +756,13 @@ export default function StudentQuizPage() {
                 you get a warning. After 3 warnings, the quiz is blocked and auto-submitted.
                 Leaving the quiz screen or exiting fullscreen uses your 10-second away budget;
                 once that is exhausted, the quiz is auto-submitted even if warnings are less
-                than 3. Split-screen or resizing the quiz window will immediately auto-submit
-                the quiz as cheated.
+                than 3.
+                <span className="font-semibold">
+                  {' '}
+                  On both computer and phone, if the quiz uses only part of the screen
+                  (side-by-side or above/below another app), the quiz is immediately
+                  auto-submitted as cheated.
+                </span>
               </p>
             </div>
 
@@ -904,7 +909,7 @@ export default function StudentQuizPage() {
                   <Button
                     onClick={() =>
                       setCurrentQuestion(
-                        Math.min(quiz.questions.length - 1, currentQuestion + 1)
+                        Math.min(quiz.questions.length - 1, currentQuestion + 1),
                       )
                     }
                   >
