@@ -172,45 +172,42 @@ export default function QuizResultsPage() {
   }, [autoRefresh, fetchResults, quizId]);
 
   const handleDownloadExcel = async (detailed: boolean = false) => {
-    if (!quizId) return;
-    setDownloading(true);
-    try {
-      // ✅ use quizAPI helper which calls /quiz/:id/results/download
-      // This returns AxiosResponse<Blob>
-      const response = await quizAPI.downloadResults(quizId, detailed);
-      const blob = response.data;
+  if (!quizId) return;
+  setDownloading(true);
+  try {
+    // ✅ use quizAPI helper which returns Blob
+    const blob = await quizAPI.downloadResults(quizId, detailed);
 
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute(
-        'download',
-        `${(quizTitle || 'quiz')
-          .toLowerCase()
-          .replace(/[^a-z0-9]/gi, '_')}_results${
-          detailed ? '_detailed' : ''
-        }.xlsx`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `${(quizTitle || 'quiz')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gi, '_')}_results${detailed ? '_detailed' : ''}.xlsx`
+    );
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
 
-      toast({
-        title: 'Success',
-        description: 'Excel file downloaded successfully',
-      });
-    } catch (error: any) {
-      console.error('Error downloading Excel:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to download Excel file',
-        variant: 'destructive',
-      });
-    } finally {
-      setDownloading(false);
-    }
-  };
+    toast({
+      title: 'Success',
+      description: 'Excel file downloaded successfully',
+    });
+  } catch (error: any) {
+    console.error('Error downloading Excel:', error);
+    toast({
+      title: 'Error',
+      description: 'Failed to download Excel file',
+      variant: 'destructive',
+    });
+  } finally {
+    setDownloading(false);
+  }
+};
+
 
   const calculateStats = () => {
     if (attempts.length === 0) return null;
