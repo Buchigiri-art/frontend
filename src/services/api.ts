@@ -75,8 +75,11 @@ export const quizAPI = {
     return response.data;
   },
 
-  // ✅ Download Excel (summary/detailed) – return the Blob itself
-  downloadResults: async (quizId: string, detailed: boolean = false): Promise<Blob> => {
+  // ✅ Download Excel (summary/detailed) – returns Blob
+  downloadResults: async (
+    quizId: string,
+    detailed: boolean = false
+  ): Promise<Blob> => {
     const url = `/quiz/${quizId}/results/download${detailed ? '?detailed=true' : ''}`;
     const response = await api.get(url, { responseType: 'blob' });
     return response.data as Blob;
