@@ -176,7 +176,9 @@ export default function QuizResultsPage() {
     setDownloading(true);
     try {
       // ✅ use quizAPI helper which calls /quiz/:id/results/download
-      const blob = await quizAPI.downloadResults(quizId, detailed);
+      // This returns AxiosResponse<Blob>
+      const response = await quizAPI.downloadResults(quizId, detailed);
+      const blob = response.data;
 
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
