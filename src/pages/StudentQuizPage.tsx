@@ -65,6 +65,8 @@ export default function StudentQuizPage() {
 
   // For leave timer UI countdown display (milliseconds)
   const [leaveTimeLeft, setLeaveTimeLeft] = useState<number>(LEAVE_BUDGET_MS);
+  // UI state: are we currently “away” (focus lost episode)?
+  const [isAway, setIsAway] = useState(false);
 
   // Refs for stale closures & timing
   const localWarningsRef = useRef(0);
@@ -196,6 +198,7 @@ export default function StudentQuizPage() {
       setLeaveTimeLeft(LEAVE_BUDGET_MS);
       clearLeaveTimer();
       isAwayRef.current = false;
+      setIsAway(false);
       didEnterFullscreenRef.current = false;
 
       if (data.hasStarted && data.attemptId) {
@@ -265,6 +268,7 @@ export default function StudentQuizPage() {
       setLeaveTimeLeft(LEAVE_BUDGET_MS);
       clearLeaveTimer();
       isAwayRef.current = false;
+      setIsAway(false);
       didEnterFullscreenRef.current = false;
 
       applyBodyStyles();
@@ -469,6 +473,7 @@ export default function StudentQuizPage() {
     if (!quizActiveRef.current || quizSubmittedRef.current) return;
     if (!isAwayRef.current) return;
     isAwayRef.current = false;
+    setIsAway(false);
     clearLeaveTimer();
   };
 
@@ -491,6 +496,7 @@ export default function StudentQuizPage() {
     window.addEventListener('resize', onWindowResize, true);
 
     isAwayRef.current = false;
+    setIsAway(false);
 
     pollFocusVisibility();
     applyBodyStyles();
@@ -587,6 +593,7 @@ export default function StudentQuizPage() {
 
     // Start new away episode
     isAwayRef.current = true;
+    setIsAway(true);
 
     if (localWarningsRef.current < MAX_WARNINGS) {
       sendFlag(reasonBase);
@@ -917,7 +924,7 @@ export default function StudentQuizPage() {
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
                 {/* Show leave timer countdown if active */}
-                {leaveTimeoutRef.current !== null && leaveTimeLeft > 0 && (
+                {isAway && leaveTimeLeft > 0 && (
                   <p className="text-xs text-warning mt-1">
                     Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
                     {leaveTimeLeft > 1000 ? 's' : ''} left (global 10s limit)
