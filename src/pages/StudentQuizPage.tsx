@@ -63,9 +63,8 @@ export default function StudentQuizPage() {
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
 
-  // For leave timer UI countdown display (milliseconds)
+  // UI: remaining away time and whether we are currently "away"
   const [leaveTimeLeft, setLeaveTimeLeft] = useState<number>(LEAVE_BUDGET_MS);
-  // UI state: are we currently “away” (focus lost episode)?
   const [isAway, setIsAway] = useState(false);
 
   // Refs for stale closures & timing
@@ -78,23 +77,23 @@ export default function StudentQuizPage() {
   const quizActiveRef = useRef(false);
   const quizSubmittedRef = useRef(false);
 
-  // Tracks whether we are currently in an "away episode"
+  // Whether we are currently in an "away" episode
   const isAwayRef = useRef(false);
 
-  // Tracks if fullscreen has ever successfully been entered on this device
-  // Only after this is true, we enforce "fullscreen exit" as a violation.
+  // Whether fullscreen has ever worked on this device
   const didEnterFullscreenRef = useRef(false);
 
-  // Global away-time accounting:
-  // total away time across past episodes (ms)
-  const usedLeaveMsRef = useRef(0);
-  // start time (Date.now) of current away episode
-  const awayStartAtRef = useRef<number | null>(null);
+  // Global away accounting (no setTimeout, wall-clock only)
+  const usedLeaveMsRef = useRef(0); // total used across episodes
+  const awayStartAtRef = useRef<number | null>(null); // Date.now when current episode started
+
+  // Ensure only ONE warning per away episode
+  const hasEpisodeWarningRef = useRef(false);
 
   attemptIdRef.current = attemptId;
   tokenRef.current = token;
 
-  // Helper: how much leave time remains, based on wall-clock time
+  // Helper: how much away budget remains right now
   const getRemainingLeaveMs = () => {
     const baseUsed = usedLeaveMsRef.current;
     if (isAwayRef.current && awayStartAtRef.current !== null) {
@@ -114,7 +113,7 @@ export default function StudentQuizPage() {
       quizActiveRef.current = false;
       quizSubmittedRef.current = false;
       removeMonitoringListeners();
-      clearLeaveTimer();
+      resetAwayState();
       restoreBodyStyles();
     };
   }, [token]);
@@ -128,17 +127,15 @@ export default function StudentQuizPage() {
       return () => {
         quizActiveRef.current = false;
         removeMonitoringListeners();
-        clearLeaveTimer();
       };
     } else {
       quizActiveRef.current = false;
       quizSubmittedRef.current = quizSubmitted;
       removeMonitoringListeners();
-      clearLeaveTimer();
     }
   }, [quizStarted, quizSubmitted]);
 
-  // ------------- Timer countdown with drift correction -----------------
+  // ------------- Quiz countdown -----------------
   useEffect(() => {
     if (!quizStarted || quizSubmitted || timeLeft <= 0) return;
 
@@ -204,12 +201,8 @@ export default function StudentQuizPage() {
       setStudentYear(info.year || '');
       setStudentSemester(info.semester || '');
 
-      // reset away budget
-      usedLeaveMsRef.current = 0;
-      awayStartAtRef.current = null;
-      isAwayRef.current = false;
-      setIsAway(false);
-      setLeaveTimeLeft(LEAVE_BUDGET_MS);
+      // reset away state
+      resetAwayState();
 
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
@@ -234,7 +227,17 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ------------------------ Start quiz with warning reset ------------------------
+  // Reset away/timer state
+  const resetAwayState = () => {
+    usedLeaveMsRef.current = 0;
+    awayStartAtRef.current = null;
+    isAwayRef.current = false;
+    hasEpisodeWarningRef.current = false;
+    setIsAway(false);
+    setLeaveTimeLeft(LEAVE_BUDGET_MS);
+  };
+
+  // ------------------------ Start quiz ------------------------
   const handleStartQuiz = async () => {
     if (
       !studentName.trim() ||
@@ -273,17 +276,11 @@ export default function StudentQuizPage() {
       setWarningCount(0);
       lastViolationTimeRef.current = 0;
       lastWarnAtRef.current = 0;
-
-      usedLeaveMsRef.current = 0;
-      awayStartAtRef.current = null;
-      isAwayRef.current = false;
-      setIsAway(false);
-      setLeaveTimeLeft(LEAVE_BUDGET_MS);
+      resetAwayState();
+      didEnterFullscreenRef.current = false;
 
       applyBodyStyles();
 
-      // Try fullscreen on all devices (desktop + mobile).
-      // If it works at least once, we will enforce staying in fullscreen.
       const ok = await tryEnterFullscreen(3, 300);
       if (ok) {
         didEnterFullscreenRef.current = true;
@@ -331,7 +328,7 @@ export default function StudentQuizPage() {
 
       setQuizSubmitted(true);
       removeMonitoringListeners();
-      clearLeaveTimer();
+      resetAwayState();
       restoreBodyStyles();
 
       toast({
@@ -377,7 +374,7 @@ export default function StudentQuizPage() {
     }
 
     removeMonitoringListeners();
-    clearLeaveTimer();
+    resetAwayState();
     restoreBodyStyles();
 
     toast({
@@ -415,15 +412,7 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // ------------- Leave timer reset (on quiz end/cleanup) ----------------
-  const clearLeaveTimer = () => {
-    usedLeaveMsRef.current = 0;
-    awayStartAtRef.current = null;
-    isAwayRef.current = false;
-    setIsAway(false);
-    setLeaveTimeLeft(LEAVE_BUDGET_MS);
-  };
-
+  // ---------------- Helper guards ----------------
   const guard = () => {
     if (!quizActiveRef.current || quizSubmittedRef.current) return false;
     return true;
@@ -433,7 +422,7 @@ export default function StudentQuizPage() {
     if (!quizActiveRef.current || quizSubmittedRef.current) return;
     if (!isAwayRef.current) return;
 
-    // Finish current away episode and accumulate used time
+    // Close current away episode and accumulate time
     if (awayStartAtRef.current !== null) {
       const now = Date.now();
       const extra = now - awayStartAtRef.current;
@@ -442,6 +431,7 @@ export default function StudentQuizPage() {
 
     awayStartAtRef.current = null;
     isAwayRef.current = false;
+    hasEpisodeWarningRef.current = false;
     setIsAway(false);
     setLeaveTimeLeft(getRemainingLeaveMs());
   };
@@ -457,7 +447,12 @@ export default function StudentQuizPage() {
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
-    window.addEventListener('pagehide', onPageHide, true);
+
+    // pagehide often fires on mobile when going home:
+    // ignore it for mobile to avoid duplicate warnings
+    if (!isMobile) {
+      window.addEventListener('pagehide', onPageHide, true);
+    }
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
@@ -465,10 +460,33 @@ export default function StudentQuizPage() {
     window.addEventListener('resize', onWindowResize, true);
 
     isAwayRef.current = false;
+    hasEpisodeWarningRef.current = false;
     setIsAway(false);
+    setLeaveTimeLeft(getRemainingLeaveMs());
 
     pollFocusVisibility();
     applyBodyStyles();
+  };
+
+  const removeMonitoringListeners = () => {
+    if (!monitoringRef.current) return;
+    monitoringRef.current = false;
+
+    document.removeEventListener('visibilitychange', onVisibilityChange, true);
+    window.removeEventListener('focus', onWindowFocus, true);
+    window.removeEventListener('blur', onWindowBlur, true);
+    document.removeEventListener('fullscreenchange', onFullscreenChange, true);
+    window.removeEventListener('copy', onCopyAttempt, true);
+    window.removeEventListener('beforeunload', onBeforeUnload, true);
+
+    if (!isMobile) {
+      window.removeEventListener('pagehide', onPageHide, true);
+    }
+
+    document.removeEventListener('contextmenu', onContextMenu, true);
+    window.removeEventListener('keydown', onKeyDown, true);
+
+    window.removeEventListener('resize', onWindowResize, true);
   };
 
   const pollFocusVisibility = useCallback(() => {
@@ -496,7 +514,7 @@ export default function StudentQuizPage() {
       handleReturnToFocus();
     }
 
-    // While away, keep updating remaining time and enforce auto-submit
+    // While away, update remaining time and enforce timeout
     if (isAwayRef.current) {
       const remaining = getRemainingLeaveMs();
       setLeaveTimeLeft(remaining);
@@ -507,24 +525,6 @@ export default function StudentQuizPage() {
 
     requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
   }, []);
-
-  const removeMonitoringListeners = () => {
-    if (!monitoringRef.current) return;
-    monitoringRef.current = false;
-
-    document.removeEventListener('visibilitychange', onVisibilityChange, true);
-    window.removeEventListener('focus', onWindowFocus, true);
-    window.removeEventListener('blur', onWindowBlur, true);
-    document.removeEventListener('fullscreenchange', onFullscreenChange, true);
-    window.removeEventListener('copy', onCopyAttempt, true);
-    window.removeEventListener('beforeunload', onBeforeUnload, true);
-    window.removeEventListener('pagehide', onPageHide, true);
-
-    document.removeEventListener('contextmenu', onContextMenu, true);
-    window.removeEventListener('keydown', onKeyDown, true);
-
-    window.removeEventListener('resize', onWindowResize, true);
-  };
 
   // ---------------- Warnings management ----------------
   const sendFlag = async (reason: string) => {
@@ -565,33 +565,36 @@ export default function StudentQuizPage() {
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
-    // Check if budget already exhausted
+    // Check global budget
     const currentRemaining = getRemainingLeaveMs();
     if (currentRemaining <= 0) {
       handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
       return;
     }
 
-    // Already away -> don't stack warnings, just keep tracking time
+    // Already away -> don't warn again, just update time
     if (isAwayRef.current) {
-      setLeaveTimeLeft(currentRemaining);
-      if (currentRemaining <= 0) {
+      const remaining = getRemainingLeaveMs();
+      setLeaveTimeLeft(remaining);
+      if (remaining <= 0) {
         handleAutoSubmitAsCheat(`${reasonBase}:timeout`);
       }
       return;
     }
 
-    // Start new away episode
+    // New away episode
     isAwayRef.current = true;
     setIsAway(true);
     awayStartAtRef.current = Date.now();
-    setLeaveTimeLeft(getRemainingLeaveMs());
+    setLeaveTimeLeft(currentRemaining);
+    hasEpisodeWarningRef.current = false;
 
-    if (localWarningsRef.current < MAX_WARNINGS) {
+    // Single warning per away episode
+    if (!hasEpisodeWarningRef.current && localWarningsRef.current < MAX_WARNINGS) {
       sendFlag(reasonBase);
+      hasEpisodeWarningRef.current = true;
     }
 
-    // If warnings exceeded or budget just used
     const afterRemaining = getRemainingLeaveMs();
     if (afterRemaining <= 0) {
       handleAutoSubmitAsCheat(`${reasonBase}:timeout`);
@@ -671,11 +674,9 @@ export default function StudentQuizPage() {
     const isFs = !!document.fullscreenElement;
 
     if (isFs) {
-      // Once we enter fullscreen at least once, we start enforcing it.
       didEnterFullscreenRef.current = true;
       handleReturnToFocus();
     } else if (didEnterFullscreenRef.current) {
-      // Only treat leaving fullscreen as violation if we were ever in fullscreen successfully.
       handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     }
   };
@@ -897,7 +898,6 @@ export default function StudentQuizPage() {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
 
-    // Show fullscreen button on ALL devices whenever not in fullscreen
     const showFullscreenButton = !document.fullscreenElement;
 
     return (
@@ -913,7 +913,6 @@ export default function StudentQuizPage() {
                 <p className="text-xs text-muted-foreground">
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
-                {/* Show leave timer countdown if active */}
                 {isAway && leaveTimeLeft > 0 && (
                   <p className="text-xs text-warning mt-1">
                     Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
