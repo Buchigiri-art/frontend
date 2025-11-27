@@ -15,8 +15,8 @@ import axios from 'axios';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total away budget
-
 const SPLIT_DIM_THRESHOLD = 0.8;
+const VIOLATION_COOLDOWN_MS = 3000; // 3 seconds cooldown between warnings
 
 const isMobile =
   typeof navigator !== 'undefined' &&
@@ -63,9 +63,10 @@ export default function StudentQuizPage() {
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
 
-  // Refs to avoid stale closures and for timing accuracy
+  // Refs for accurate timing and stale closure avoidance
   const localWarningsRef = useRef(0);
   const lastWarnAtRef = useRef(0);
+  const lastViolationTimeRef = useRef(0);
   const tokenRef = useRef(token);
   const monitoringRef = useRef(false);
   const attemptIdRef = useRef('');
@@ -79,7 +80,7 @@ export default function StudentQuizPage() {
   attemptIdRef.current = attemptId;
   tokenRef.current = token;
 
-  // --------------- Initial data load ----------------
+  // Initial data load
   useEffect(() => {
     tokenRef.current = token;
     fetchQuizData();
@@ -93,7 +94,7 @@ export default function StudentQuizPage() {
     };
   }, [token]);
 
-  // Handle monitoring enable/disable on quiz start/submit
+  // Enable/disable monitoring on quiz start/submit
   useEffect(() => {
     if (quizStarted && !quizSubmitted) {
       quizActiveRef.current = true;
@@ -112,7 +113,7 @@ export default function StudentQuizPage() {
     }
   }, [quizStarted, quizSubmitted]);
 
-  // Timer countdown with accuracy using Date.now()
+  // Timer countdown with drift correction
   useEffect(() => {
     if (!quizStarted || quizSubmitted || timeLeft <= 0) return;
 
@@ -121,8 +122,8 @@ export default function StudentQuizPage() {
       if (!quizActiveRef.current || quizSubmittedRef.current) return;
       const now = Date.now();
       const drift = now - expected;
+
       if (drift > 1000) {
-        // large drift, reset expected
         expected = now + 1000;
       } else {
         expected += 1000;
@@ -163,8 +164,13 @@ export default function StudentQuizPage() {
 
       setQuiz(data.quiz);
       setEmail(data.studentInfo?.email || data.email || '');
-      setWarningCount(data.warningCount || 0);
-      localWarningsRef.current = data.warningCount || 0;
+      if (typeof data.warningCount === 'number') {
+        localWarningsRef.current = data.warningCount;
+        setWarningCount(data.warningCount);
+      } else {
+        localWarningsRef.current = 0;
+        setWarningCount(0);
+      }
 
       const info = data.studentInfo || {};
       setStudentName(info.name || '');
@@ -199,7 +205,7 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Start quiz after confirming student info
+  // Start quiz after confirming student info and reset warnings
   const handleStartQuiz = async () => {
     if (
       !studentName.trim() ||
@@ -232,6 +238,11 @@ export default function StudentQuizPage() {
       setTimeLeft((res.data.quiz.duration || 30) * 60);
       setQuiz(res.data.quiz);
       setShowInfoForm(false);
+
+      localWarningsRef.current = 0;
+      setWarningCount(0);
+      lastViolationTimeRef.current = 0;
+      lastWarnAtRef.current = 0;
 
       applyBodyStyles();
 
@@ -335,7 +346,7 @@ export default function StudentQuizPage() {
     setAnswers(newAnswers);
   };
 
-  // Refined fullscreen attempt with retries
+  // Fullscreen attempts with retry
   const tryEnterFullscreen = async (retries = 3, delayMs = 300): Promise<boolean> => {
     const attemptFS = async (): Promise<boolean> => {
       try {
@@ -356,7 +367,7 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // Leave timer management with high precision and pause/resume logic
+  // Leave timer management with precision
   const startLeaveTimer = (reason: string, stillAwayCheck: () => boolean) => {
     if (quizSubmittedRef.current) return;
 
@@ -398,7 +409,7 @@ export default function StudentQuizPage() {
     return true;
   };
 
-  // Strict monitoring start
+  // Start monitoring listeners strictly
   const enableMonitoring = () => {
     if (monitoringRef.current) return;
     monitoringRef.current = true;
@@ -414,16 +425,14 @@ export default function StudentQuizPage() {
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
 
-    // Strict split-screen detection
     window.addEventListener('resize', onWindowResize, true);
 
-    // Continuous focus/visibility polling using requestAnimationFrame
     pollFocusVisibility();
 
     applyBodyStyles();
   };
 
-  // Polling for focus and visibility continuous detection to catch edge cases
+  // Poll for continuous focus/visibility violations
   const pollFocusVisibility = useCallback(() => {
     if (!guard() || !monitoringRef.current) return;
 
@@ -443,11 +452,10 @@ export default function StudentQuizPage() {
       clearLeaveTimer();
     }
 
-    // Schedule next check ~250ms
     requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
   }, []);
 
-  // Remove all monitoring event listeners
+  // Remove all event listeners for monitoring
   const removeMonitoringListeners = () => {
     if (!monitoringRef.current) return;
     monitoringRef.current = false;
@@ -466,10 +474,12 @@ export default function StudentQuizPage() {
     window.removeEventListener('resize', onWindowResize, true);
   };
 
-  // Handle warnings and flags with debounce
+  // Send warning flags with 750ms debounce and console log for tracing
   const sendFlag = async (reason: string) => {
     const now = performance.now();
-    if (now - (lastWarnAtRef.current || 0) < 500) return;
+    if (now - (lastWarnAtRef.current || 0) < 750) {
+      return;
+    }
     lastWarnAtRef.current = now;
 
     localWarningsRef.current++;
@@ -495,23 +505,27 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Unified focus loss handler with strict enforcement
+  // Cooldown-enforced unified focus loss handler
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
-    sendFlag(reasonBase);
-    const count = localWarningsRef.current;
+    const now = performance.now();
+    if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) {
+      // Skip if within cooldown to prevent rapid multiple warnings
+      return;
+    }
+    lastViolationTimeRef.current = now;
 
-    if (count >= MAX_WARNINGS) {
+    sendFlag(reasonBase);
+    if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat(`${reasonBase}:max-warnings`);
     } else {
       startLeaveTimer(reasonBase, stillAwayCheck);
     }
   };
 
-  // Event handlers for cheating-proof quiz session
+  // Event Handlers
 
-  // Detect split-screen or resize
   const onWindowResize = () => {
     if (!guard()) return;
 
@@ -538,7 +552,6 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Tab visibility change
   const onVisibilityChange = () => {
     if (!guard()) return;
 
@@ -556,13 +569,11 @@ export default function StudentQuizPage() {
     }, 300);
   };
 
-  // Window focus gained
   const onWindowFocus = () => {
     if (!guard()) return;
     clearLeaveTimer();
   };
 
-  // Window lost focus
   const onWindowBlur = () => {
     if (!guard()) return;
 
@@ -577,7 +588,6 @@ export default function StudentQuizPage() {
     }, 300);
   };
 
-  // Fullscreen changed
   const onFullscreenChange = () => {
     if (!guard()) return;
 
@@ -590,13 +600,11 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Mobile pagehide event
   const onPageHide = (_e: Event) => {
     if (!guard()) return;
     handleFocusLostViolation('pagehide', () => document.visibilityState !== 'visible');
   };
 
-  // Clipboard copy attempt
   const onCopyAttempt = (e: ClipboardEvent) => {
     if (!guard()) return;
     e.preventDefault();
@@ -606,7 +614,6 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Before unload - block navigation away
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (!guard()) return;
     sendFlag('attempt:beforeunload');
@@ -615,7 +622,6 @@ export default function StudentQuizPage() {
     e.returnValue = '';
   };
 
-  // Context menu blocked
   const onContextMenu = (e: Event) => {
     if (!guard()) return;
     e.preventDefault();
@@ -625,7 +631,6 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Keydown block certain keys
   const onKeyDown = (e: KeyboardEvent) => {
     if (!guard()) return;
 
@@ -649,7 +654,7 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Body styles to block select, overflow during quiz active
+  // Body styles to prevent copy/select/scaling during quiz
   const applyBodyStyles = () => {
     try {
       const body = document.body;
@@ -663,7 +668,7 @@ export default function StudentQuizPage() {
       body.style.touchAction = 'manipulation';
       body.style.overflow = 'hidden';
     } catch {
-      // ignore
+      // ignore errors silently
     }
   };
 
@@ -690,8 +695,7 @@ export default function StudentQuizPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // UI rendering code follows exactly as in original...
-  // (Not repeated here for brevity; keep the same UI code from your original snippet.)
+  // UI rendering code omitted for brevity: keep same as your original snippet
 
   if (loading) {
     return (
@@ -729,9 +733,7 @@ export default function StudentQuizPage() {
         <Card className="max-w-md w-full">
           <CardHeader>
             <CardTitle>{quiz.title}</CardTitle>
-            <CardDescription>
-              {quiz.description || 'Confirm your details to start the quiz'}
-            </CardDescription>
+            <CardDescription>{quiz.description || 'Confirm your details to start the quiz'}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -766,8 +768,7 @@ export default function StudentQuizPage() {
                 Monitoring is enabled. Any time this quiz loses focus or goes behind
                 another app/tab (including split-screen or partial window), you get a
                 warning. After 3 warnings, the quiz is blocked and auto-submitted. Leaving
-                the quiz screen uses your{' '}
-                <span className="font-semibold">10-second total away budget</span>; once
+                the quiz screen uses your <span className="font-semibold">10-second total away budget</span>; once
                 that is exhausted, the quiz is auto-submitted even if warnings are less
                 than 3.
               </p>
@@ -951,7 +952,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Fallback for not found quiz
+  // Fallback for quiz not found
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="max-w-md w-full">
