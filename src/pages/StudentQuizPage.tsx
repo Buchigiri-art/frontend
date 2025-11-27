@@ -1,5 +1,5 @@
 // src/pages/StudentQuizPage.tsx
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,14 +14,10 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
-const LEAVE_BUDGET_MS = 10000; // 10 seconds total budget across all leaves
+const LEAVE_BUDGET_MS = 10000; // 10 seconds total away budget
 
-// STRICT SPLIT-SCREEN DETECTION (desktop + mobile):
-// If width OR height of window is less than this fraction of the full screen
-// we treat it like focus-loss and apply warning + 10s budget.
 const SPLIT_DIM_THRESHOLD = 0.8;
 
-// Detect mobile – currently same behavior, but kept in case you want future tweaks
 const isMobile =
   typeof navigator !== 'undefined' &&
   /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -49,7 +45,6 @@ export default function StudentQuizPage() {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [email, setEmail] = useState('');
 
-  // Student info (all locked / read-only)
   const [showInfoForm, setShowInfoForm] = useState(false);
   const [studentName, setStudentName] = useState('');
   const [studentUSN, setStudentUSN] = useState('');
@@ -57,7 +52,6 @@ export default function StudentQuizPage() {
   const [studentYear, setStudentYear] = useState('');
   const [studentSemester, setStudentSemester] = useState('');
 
-  // Quiz state
   const [quizStarted, setQuizStarted] = useState(false);
   const [attemptId, setAttemptId] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -66,29 +60,30 @@ export default function StudentQuizPage() {
   const [submitting, setSubmitting] = useState(false);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
 
-  // Anti-cheat / monitoring
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
-  const localWarningsRef = useRef<number>(0);
-  const lastWarnAtRef = useRef<number>(0);
-  const tokenRef = useRef<string | undefined>(token);
-  const monitoringRef = useRef<boolean>(false);
 
-  // Leave / away tracking: cumulative 10-second budget
+  // Refs to avoid stale closures and for timing accuracy
+  const localWarningsRef = useRef(0);
+  const lastWarnAtRef = useRef(0);
+  const tokenRef = useRef(token);
+  const monitoringRef = useRef(false);
+  const attemptIdRef = useRef('');
+  const quizActiveRef = useRef(false);
+  const quizSubmittedRef = useRef(false);
+
   const leaveTimeoutRef = useRef<number | null>(null);
   const leaveStartAtRef = useRef<number | null>(null);
-  const remainingLeaveMsRef = useRef<number>(LEAVE_BUDGET_MS);
+  const remainingLeaveMsRef = useRef(LEAVE_BUDGET_MS);
 
-  const quizActiveRef = useRef<boolean>(false);
-  const quizSubmittedRef = useRef<boolean>(false);
-
-  const attemptIdRef = useRef<string>('');
   attemptIdRef.current = attemptId;
+  tokenRef.current = token;
 
-  // ----------------- INITIAL LOAD -----------------
+  // --------------- Initial data load ----------------
   useEffect(() => {
     tokenRef.current = token;
     fetchQuizData();
+
     return () => {
       quizActiveRef.current = false;
       quizSubmittedRef.current = false;
@@ -96,10 +91,9 @@ export default function StudentQuizPage() {
       clearLeaveTimer();
       restoreBodyStyles();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Enable / disable monitoring whenever quizStarted / quizSubmitted change
+  // Handle monitoring enable/disable on quiz start/submit
   useEffect(() => {
     if (quizStarted && !quizSubmitted) {
       quizActiveRef.current = true;
@@ -116,25 +110,41 @@ export default function StudentQuizPage() {
       removeMonitoringListeners();
       clearLeaveTimer();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quizStarted, quizSubmitted]);
 
-  // Timer countdown
+  // Timer countdown with accuracy using Date.now()
   useEffect(() => {
-    if (quizStarted && timeLeft > 0 && !quizSubmitted) {
-      const timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            handleSubmitQuiz();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timer);
-    }
+    if (!quizStarted || quizSubmitted || timeLeft <= 0) return;
+
+    let expected = Date.now() + 1000;
+    const tick = () => {
+      if (!quizActiveRef.current || quizSubmittedRef.current) return;
+      const now = Date.now();
+      const drift = now - expected;
+      if (drift > 1000) {
+        // large drift, reset expected
+        expected = now + 1000;
+      } else {
+        expected += 1000;
+      }
+
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          handleSubmitQuiz();
+          return 0;
+        }
+        return prev - 1;
+      });
+
+      setTimeout(tick, Math.max(0, 1000 - drift));
+    };
+
+    const timerId = setTimeout(tick, 1000);
+
+    return () => clearTimeout(timerId);
   }, [quizStarted, timeLeft, quizSubmitted]);
 
+  // Fetch quiz and attempt data
   const fetchQuizData = async () => {
     try {
       const res = await axios.get(`${API_URL}/student-quiz/attempt/${token}`);
@@ -156,7 +166,6 @@ export default function StudentQuizPage() {
       setWarningCount(data.warningCount || 0);
       localWarningsRef.current = data.warningCount || 0;
 
-      // Prefill ALL student info from backend (locked in UI)
       const info = data.studentInfo || {};
       setStudentName(info.name || '');
       setStudentUSN(info.usn || '');
@@ -168,18 +177,16 @@ export default function StudentQuizPage() {
         setAttemptId(data.attemptId);
         setAnswers(new Array(data.quiz.questions.length).fill(''));
         setTimeLeft((data.quiz.duration || 30) * 60);
-
-        // Resume quiz
         setQuizStarted(true);
         applyBodyStyles();
         setShowInfoForm(false);
 
-        // Reset leave budget for this active session
         remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
         clearLeaveTimer();
       } else {
         setShowInfoForm(true);
       }
+
       setLoading(false);
     } catch (err: any) {
       console.error('Error fetching quiz:', err);
@@ -192,9 +199,8 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ----------------- START / SUBMIT -----------------
+  // Start quiz after confirming student info
   const handleStartQuiz = async () => {
-    // Just in case backend didn’t send details
     if (
       !studentName.trim() ||
       !studentUSN.trim() ||
@@ -204,8 +210,7 @@ export default function StudentQuizPage() {
     ) {
       toast({
         title: 'Missing Information',
-        description:
-          'Your details are incomplete. Please contact your instructor to update your record.',
+        description: 'Your details are incomplete. Please contact your instructor.',
         variant: 'destructive',
       });
       return;
@@ -214,7 +219,7 @@ export default function StudentQuizPage() {
     setLoading(true);
     try {
       const res = await axios.post(`${API_URL}/student-quiz/attempt/start`, {
-        token,
+        token: tokenRef.current,
         studentName,
         studentUSN,
         studentBranch,
@@ -223,9 +228,9 @@ export default function StudentQuizPage() {
       });
 
       setAttemptId(res.data.attemptId);
-      setQuiz(res.data.quiz);
       setAnswers(new Array(res.data.quiz.questions.length).fill(''));
       setTimeLeft((res.data.quiz.duration || 30) * 60);
+      setQuiz(res.data.quiz);
       setShowInfoForm(false);
 
       applyBodyStyles();
@@ -234,14 +239,13 @@ export default function StudentQuizPage() {
 
       setQuizStarted(true);
 
-      // Fresh 10-second leave budget for this attempt
       remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
       clearLeaveTimer();
 
       toast({
         title: 'Quiz Started',
         description:
-          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit, split-screen) gives warnings (max 3). Total away time allowed is 10 seconds; after that, the quiz is auto-submitted even if warnings are less than 3.',
+          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit, split-screen) triggers warnings. After 3 warnings or 10s away time, quiz auto-submits.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -256,7 +260,7 @@ export default function StudentQuizPage() {
   };
 
   const handleSubmitQuiz = async () => {
-    if (submitting || quizSubmitted) return;
+    if (submitting || quizSubmittedRef.current) return;
 
     setSubmitting(true);
     try {
@@ -297,7 +301,10 @@ export default function StudentQuizPage() {
     setQuizSubmitted(true);
 
     try {
-      await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
+      await axios.post(`${API_URL}/student-quiz/attempt/flag`, {
+        token: tokenRef.current,
+        reason,
+      });
     } catch (err) {
       console.warn('Flagging failed during auto-submit:', err);
     }
@@ -317,8 +324,7 @@ export default function StudentQuizPage() {
 
     toast({
       title: 'Quiz Blocked',
-      description:
-        'Repeated or severe violations detected. The quiz has been auto-submitted as cheated.',
+      description: 'Detected violations. Quiz auto-submitted as cheated.',
       variant: 'destructive',
     });
   };
@@ -329,17 +335,14 @@ export default function StudentQuizPage() {
     setAnswers(newAnswers);
   };
 
-  // ----------------- FULLSCREEN HELPERS -----------------
+  // Refined fullscreen attempt with retries
   const tryEnterFullscreen = async (retries = 3, delayMs = 300): Promise<boolean> => {
     const attemptFS = async (): Promise<boolean> => {
       try {
         if (document.fullscreenElement) return true;
         const el: any = document.documentElement;
-        if (el.requestFullscreen) {
-          await el.requestFullscreen();
-        } else if (el.webkitRequestFullscreen) {
-          await el.webkitRequestFullscreen();
-        }
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
         return !!document.fullscreenElement;
       } catch {
         return false;
@@ -347,45 +350,31 @@ export default function StudentQuizPage() {
     };
 
     for (let i = 0; i < retries; i++) {
-      const ok = await attemptFS();
-      if (ok) return true;
+      if (await attemptFS()) return true;
       await new Promise((r) => setTimeout(r, delayMs));
     }
     return false;
   };
 
-  // ----------------- LEAVE TIMER HELPERS (cumulative 10s) -----------------
-  /**
-   * Start a countdown using the remaining 10s "away" budget.
-   * If the time elapses AND the student is still "away" (according to stillAwayCheck),
-   * auto-submit as cheat.
-   */
+  // Leave timer management with high precision and pause/resume logic
   const startLeaveTimer = (reason: string, stillAwayCheck: () => boolean) => {
     if (quizSubmittedRef.current) return;
 
-    // If no budget left, auto-submit immediately
     if (remainingLeaveMsRef.current <= 0) {
       handleAutoSubmitAsCheat(`${reason}:no-budget-left`);
       return;
     }
 
-    // If a timer is already running, don't start another
     if (leaveTimeoutRef.current != null) return;
 
-    // Mark when this leave started
-    leaveStartAtRef.current = Date.now();
+    leaveStartAtRef.current = performance.now();
 
-    // Use whatever budget is left as the timeout duration
     leaveTimeoutRef.current = window.setTimeout(() => {
       leaveTimeoutRef.current = null;
-
-      // We've just used up the entire remaining budget
       remainingLeaveMsRef.current = 0;
       leaveStartAtRef.current = null;
 
       if (!guard()) return;
-
-      // If still away according to the specific condition, auto-submit as cheat
       if (stillAwayCheck()) {
         handleAutoSubmitAsCheat(`${reason}:timeout`);
       }
@@ -393,42 +382,72 @@ export default function StudentQuizPage() {
   };
 
   const clearLeaveTimer = () => {
-    // Stop any running timeout
-    if (leaveTimeoutRef.current != null) {
+    if (leaveTimeoutRef.current !== null) {
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
     }
-
-    // Deduct the time spent away from the remaining budget
-    if (leaveStartAtRef.current != null) {
-      const usedMs = Date.now() - leaveStartAtRef.current;
+    if (leaveStartAtRef.current !== null) {
+      const usedMs = performance.now() - leaveStartAtRef.current;
       remainingLeaveMsRef.current = Math.max(0, remainingLeaveMsRef.current - usedMs);
       leaveStartAtRef.current = null;
     }
   };
 
-  // ----------------- MONITORING -----------------
+  const guard = () => {
+    if (!quizActiveRef.current || quizSubmittedRef.current) return false;
+    return true;
+  };
+
+  // Strict monitoring start
   const enableMonitoring = () => {
     if (monitoringRef.current) return;
     monitoringRef.current = true;
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
     window.addEventListener('focus', onWindowFocus, true);
-    window.addEventListener('blur', onWindowBlur, true); // focus loss
+    window.addEventListener('blur', onWindowBlur, true);
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
-    window.addEventListener('pagehide', onPageHide, true); // mobile / iOS
+    window.addEventListener('pagehide', onPageHide, true);
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
 
-    // STRICT: watch for window resize / split-screen (desktop + mobile)
+    // Strict split-screen detection
     window.addEventListener('resize', onWindowResize, true);
+
+    // Continuous focus/visibility polling using requestAnimationFrame
+    pollFocusVisibility();
 
     applyBodyStyles();
   };
 
+  // Polling for focus and visibility continuous detection to catch edge cases
+  const pollFocusVisibility = useCallback(() => {
+    if (!guard() || !monitoringRef.current) return;
+
+    if (
+      document.visibilityState !== 'visible' ||
+      !(document.hasFocus && document.hasFocus()) ||
+      !document.fullscreenElement
+    ) {
+      handleFocusLostViolation('poll:focus-visibility', () => {
+        return (
+          document.visibilityState !== 'visible' ||
+          !(document.hasFocus && document.hasFocus()) ||
+          !document.fullscreenElement
+        );
+      });
+    } else {
+      clearLeaveTimer();
+    }
+
+    // Schedule next check ~250ms
+    requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
+  }, []);
+
+  // Remove all monitoring event listeners
   const removeMonitoringListeners = () => {
     if (!monitoringRef.current) return;
     monitoringRef.current = false;
@@ -444,23 +463,21 @@ export default function StudentQuizPage() {
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
 
-    // Stop watching resize
     window.removeEventListener('resize', onWindowResize, true);
   };
 
-  // ----------------- WARNINGS / FLAGS -----------------
+  // Handle warnings and flags with debounce
   const sendFlag = async (reason: string) => {
-    const now = Date.now();
+    const now = performance.now();
     if (now - (lastWarnAtRef.current || 0) < 500) return;
     lastWarnAtRef.current = now;
 
-    localWarningsRef.current += 1;
-    const count = localWarningsRef.current;
-    setWarningCount(count);
+    localWarningsRef.current++;
+    setWarningCount(localWarningsRef.current);
 
-    const remaining = Math.max(0, MAX_WARNINGS - count);
+    const remaining = Math.max(0, MAX_WARNINGS - localWarningsRef.current);
     toast({
-      title: `Warning ${count} / ${MAX_WARNINGS}`,
+      title: `Warning ${localWarningsRef.current} / ${MAX_WARNINGS}`,
       description:
         remaining > 0
           ? `Violation detected (${reason}). ${remaining} warning(s) remaining before auto-submit.`
@@ -469,16 +486,16 @@ export default function StudentQuizPage() {
     });
 
     try {
-      await axios.post(`${API_URL}/student-quiz/attempt/flag`, { token, reason });
+      await axios.post(`${API_URL}/student-quiz/attempt/flag`, {
+        token: tokenRef.current,
+        reason,
+      });
     } catch (err) {
       console.warn('Flag send failed:', err);
     }
   };
 
-  // Unified focus-loss handler:
-  // - always sends a warning
-  // - if warnings >= MAX_WARNINGS -> auto-submit as cheated
-  // - otherwise starts the 10s away timer with the given stillAwayCheck
+  // Unified focus loss handler with strict enforcement
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
@@ -492,35 +509,28 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ----------------- EVENT HANDLERS -----------------
-  const guard = () => {
-    if (!quizActiveRef.current || quizSubmittedRef.current) return false;
-    return true;
-  };
+  // Event handlers for cheating-proof quiz session
 
-  // STRICT: Window resize / split-screen detection (desktop + mobile)
-  // Uses the SAME warning + 10s cumulative budget logic as other focus-loss events.
+  // Detect split-screen or resize
   const onWindowResize = () => {
     if (!guard()) return;
 
     try {
-      const screenWidth = window.screen.width || window.innerWidth;
-      const screenHeight = window.screen.height || window.innerHeight;
-      if (!screenWidth || !screenHeight) return;
+      const sw = window.screen.width || window.innerWidth;
+      const sh = window.screen.height || window.innerHeight;
+      if (!sw || !sh) return;
 
-      const widthRatio = window.innerWidth / screenWidth;
-      const heightRatio = window.innerHeight / screenHeight;
+      const wr = window.innerWidth / sw;
+      const hr = window.innerHeight / sh;
 
-      // If either dimension is significantly smaller than full screen,
-      // treat it as focus-loss style violation (split screen / app over it).
-      if (widthRatio < SPLIT_DIM_THRESHOLD || heightRatio < SPLIT_DIM_THRESHOLD) {
+      if (wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD) {
         handleFocusLostViolation('window:split-screen-or-resize', () => {
-          const sw = window.screen.width || window.innerWidth;
-          const sh = window.screen.height || window.innerHeight;
-          if (!sw || !sh) return false;
-          const wr = window.innerWidth / sw;
-          const hr = window.innerHeight / sh;
-          return wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD;
+          const sw2 = window.screen.width || window.innerWidth;
+          const sh2 = window.screen.height || window.innerHeight;
+          if (!sw2 || !sh2) return false;
+          const wr2 = window.innerWidth / sw2;
+          const hr2 = window.innerHeight / sh2;
+          return wr2 < SPLIT_DIM_THRESHOLD || hr2 < SPLIT_DIM_THRESHOLD;
         });
       }
     } catch (err) {
@@ -528,84 +538,75 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Tab change / minimize / app switch
+  // Tab visibility change
   const onVisibilityChange = () => {
     if (!guard()) return;
 
     if (document.visibilityState === 'visible') {
-      // Came back – stop timer and deduct used time
       clearLeaveTimer();
       return;
     }
 
-    // Just became hidden
-    const firedAt = Date.now();
+    const firedAt = performance.now();
     setTimeout(() => {
       if (!guard()) return;
       if (document.visibilityState === 'visible') return;
-      if (Date.now() - firedAt < 250) return; // ignore tiny glitches
-
-      // Treat as focus-loss violation
+      if (performance.now() - firedAt < 250) return;
       handleFocusLostViolation('visibility:hidden', () => document.visibilityState !== 'visible');
     }, 300);
   };
 
+  // Window focus gained
   const onWindowFocus = () => {
     if (!guard()) return;
     clearLeaveTimer();
   };
 
-  // Window lost focus (switch app, alt+tab, click other window, etc.)
+  // Window lost focus
   const onWindowBlur = () => {
     if (!guard()) return;
 
-    const firedAt = Date.now();
+    const firedAt = performance.now();
 
-    // Small debounce to ignore micro-blips
     setTimeout(() => {
       if (!guard()) return;
-
-      // If focus came back, ignore
       if (document.hasFocus && document.hasFocus()) return;
-      if (Date.now() - firedAt < 250) return;
+      if (performance.now() - firedAt < 250) return;
 
       handleFocusLostViolation('window:blur', () => !(document.hasFocus && document.hasFocus()));
     }, 300);
   };
 
-  // Fullscreen exit / re-enter
+  // Fullscreen changed
   const onFullscreenChange = () => {
     if (!guard()) return;
 
     const isFs = !!document.fullscreenElement;
 
     if (!isFs) {
-      // Exited fullscreen => focus-loss violation
       handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     } else {
-      // Entered fullscreen again – stop leave timer and deduct used time
       clearLeaveTimer();
     }
   };
 
-  // iOS / mobile navigation away
+  // Mobile pagehide event
   const onPageHide = (_e: Event) => {
     if (!guard()) return;
-
-    // pagehide almost always means it's not visible / app in background
     handleFocusLostViolation('pagehide', () => document.visibilityState !== 'visible');
   };
 
+  // Clipboard copy attempt
   const onCopyAttempt = (e: ClipboardEvent) => {
     if (!guard()) return;
     e.preventDefault();
     sendFlag('clipboard:copy');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
+    if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat('clipboard:copy:max-warnings');
     }
   };
 
+  // Before unload - block navigation away
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (!guard()) return;
     sendFlag('attempt:beforeunload');
@@ -614,16 +615,17 @@ export default function StudentQuizPage() {
     e.returnValue = '';
   };
 
+  // Context menu blocked
   const onContextMenu = (e: Event) => {
     if (!guard()) return;
     e.preventDefault();
     sendFlag('contextmenu:block');
-    const count = localWarningsRef.current;
-    if (count >= MAX_WARNINGS) {
+    if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat('contextmenu:block:max-warnings');
     }
   };
 
+  // Keydown block certain keys
   const onKeyDown = (e: KeyboardEvent) => {
     if (!guard()) return;
 
@@ -633,34 +635,26 @@ export default function StudentQuizPage() {
 
     let reason: string | null = null;
 
-    if (key === 'f12') {
-      reason = 'key:f12';
-    } else if (ctrl && shift && ['i', 'c', 'j'].includes(key)) {
-      reason = `key:ctrl-shift-${key}`;
-    } else if (ctrl && key === 'u') {
-      reason = 'key:ctrl-u';
-    } else if (ctrl && key === 's') {
-      reason = 'key:ctrl-s';
-    }
+    if (key === 'f12') reason = 'key:f12';
+    else if (ctrl && shift && ['i', 'c', 'j'].includes(key)) reason = `key:ctrl-shift-${key}`;
+    else if (ctrl && key === 'u') reason = 'key:ctrl-u';
+    else if (ctrl && key === 's') reason = 'key:ctrl-s';
 
     if (reason) {
       e.preventDefault();
       sendFlag(reason);
-      const count = localWarningsRef.current;
-      if (count >= MAX_WARNINGS) {
+      if (localWarningsRef.current >= MAX_WARNINGS) {
         handleAutoSubmitAsCheat(`${reason}:max-warnings`);
       }
     }
   };
 
-  // ----------------- BODY STYLES -----------------
+  // Body styles to block select, overflow during quiz active
   const applyBodyStyles = () => {
     try {
       const body = document.body;
-
       if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
-      if (!body.dataset.prevWebkitTouchCallout)
-        body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
+      if (!body.dataset.prevWebkitTouchCallout) body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
       if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
@@ -677,9 +671,7 @@ export default function StudentQuizPage() {
     try {
       const body = document.body;
       if (body.dataset.prevUserSelect !== undefined) body.style.userSelect = body.dataset.prevUserSelect;
-      if (body.dataset.prevWebkitTouchCallout !== undefined) {
-        (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
-      }
+      if (body.dataset.prevWebkitTouchCallout !== undefined) (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
       if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
       if (body.dataset.prevOverflow !== undefined) body.style.overflow = body.dataset.prevOverflow;
 
@@ -698,7 +690,9 @@ export default function StudentQuizPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // ----------------- UI -----------------
+  // UI rendering code follows exactly as in original...
+  // (Not repeated here for brevity; keep the same UI code from your original snippet.)
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -729,7 +723,6 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Info form before starting
   if (showInfoForm && quiz) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -745,22 +738,18 @@ export default function StudentQuizPage() {
               <Label htmlFor="name">Full Name *</Label>
               <Input id="name" value={studentName} disabled className="bg-muted" />
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="usn">USN *</Label>
               <Input id="usn" value={studentUSN} disabled className="bg-muted" />
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" value={email} disabled className="bg-muted" />
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="branch">Branch *</Label>
               <Input id="branch" value={studentBranch} disabled className="bg-muted" />
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="year">Year *</Label>
@@ -771,7 +760,6 @@ export default function StudentQuizPage() {
                 <Input id="semester" value={studentSemester} disabled className="bg-muted" />
               </div>
             </div>
-
             <div>
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
@@ -784,7 +772,6 @@ export default function StudentQuizPage() {
                 than 3.
               </p>
             </div>
-
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
               {loading ? (
                 <>
@@ -800,7 +787,6 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Active quiz UI
   if (quizStarted && quiz?.questions) {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
@@ -838,8 +824,7 @@ export default function StudentQuizPage() {
                       if (!ok) {
                         toast({
                           title: 'Fullscreen blocked',
-                          description:
-                            'Please allow fullscreen via the browser UI or settings.',
+                          description: 'Please allow fullscreen via browser UI or settings.',
                         });
                       }
                     }}
@@ -904,7 +889,6 @@ export default function StudentQuizPage() {
                   />
                 </div>
               )}
-
               <div className="flex items-center justify-between pt-4 border-t">
                 <Button
                   variant="outline"
@@ -913,7 +897,6 @@ export default function StudentQuizPage() {
                 >
                   Previous
                 </Button>
-
                 {currentQuestion === quiz.questions.length - 1 ? (
                   <Button onClick={handleSubmitQuiz} disabled={submitting}>
                     {submitting ? (
@@ -927,9 +910,7 @@ export default function StudentQuizPage() {
                 ) : (
                   <Button
                     onClick={() =>
-                      setCurrentQuestion(
-                        Math.min(quiz.questions.length - 1, currentQuestion + 1),
-                      )
+                      setCurrentQuestion(Math.min(quiz.questions.length - 1, currentQuestion + 1))
                     }
                   >
                     Next
@@ -970,7 +951,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Fallback not found
+  // Fallback for not found quiz
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="max-w-md w-full">
