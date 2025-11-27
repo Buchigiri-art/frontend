@@ -16,7 +16,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total away budget
 const SPLIT_DIM_THRESHOLD = 0.8;
-const VIOLATION_COOLDOWN_MS = 3000; // 3 seconds cooldown between some warnings
+const VIOLATION_COOLDOWN_MS = 3000; // for non-focus repeat violations
 
 const isMobile =
   typeof navigator !== 'undefined' &&
@@ -63,10 +63,10 @@ export default function StudentQuizPage() {
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
 
-  // For leave timer UI countdown display (ms)
+  // For leave timer UI countdown display (milliseconds)
   const [leaveTimeLeft, setLeaveTimeLeft] = useState<number>(LEAVE_BUDGET_MS);
 
-  // Refs for state across callbacks
+  // Refs for stale closures & timing
   const localWarningsRef = useRef(0);
   const lastWarnAtRef = useRef(0);
   const lastViolationTimeRef = useRef(0);
@@ -76,11 +76,12 @@ export default function StudentQuizPage() {
   const quizActiveRef = useRef(false);
   const quizSubmittedRef = useRef(false);
 
-  // Tracks if we're currently "away" (one episode => one warning)
+  // Tracks whether we are currently in an "away episode"
   const isAwayRef = useRef(false);
 
-  // Only desktop requires fullscreen; mobile does not
-  const requireFullscreenRef = useRef(!isMobile);
+  // Tracks if fullscreen has ever successfully been entered on this device
+  // Only after this is true, we enforce "fullscreen exit" as a violation.
+  const didEnterFullscreenRef = useRef(false);
 
   // Leave timer refs
   const leaveTimeoutRef = useRef<number | null>(null);
@@ -195,6 +196,7 @@ export default function StudentQuizPage() {
       setLeaveTimeLeft(LEAVE_BUDGET_MS);
       clearLeaveTimer();
       isAwayRef.current = false;
+      didEnterFullscreenRef.current = false;
 
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
@@ -263,25 +265,22 @@ export default function StudentQuizPage() {
       setLeaveTimeLeft(LEAVE_BUDGET_MS);
       clearLeaveTimer();
       isAwayRef.current = false;
+      didEnterFullscreenRef.current = false;
 
       applyBodyStyles();
 
-      // Try fullscreen only on non-mobile; on mobile we don't require it
-      if (!isMobile) {
-        const ok = await tryEnterFullscreen(3, 300);
-        if (!ok) {
-          // If fullscreen cannot be entered, relax requirement to avoid constant violations
-          requireFullscreenRef.current = false;
-          toast({
-            title: 'Fullscreen blocked',
-            description:
-              'Fullscreen could not be enabled. Monitoring will continue without fullscreen enforcement.',
-          });
-        } else {
-          requireFullscreenRef.current = true;
-        }
+      // Try fullscreen on all devices (desktop + mobile).
+      // If it works at least once, we will enforce staying in fullscreen.
+      const ok = await tryEnterFullscreen(3, 300);
+      if (ok) {
+        didEnterFullscreenRef.current = true;
       } else {
-        requireFullscreenRef.current = false; // never require fullscreen on mobile
+        didEnterFullscreenRef.current = false;
+        toast({
+          title: 'Fullscreen not available',
+          description:
+            'Your device or browser did not enter fullscreen. Monitoring will still work for app/tab changes and backgrounding.',
+        });
       }
 
       setQuizStarted(true);
@@ -289,7 +288,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen on desktop) gives a warning and uses your 10-second global away budget. After 3 warnings or 10 seconds away total, the quiz auto-submits.',
+          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen, or exiting fullscreen after enabled) gives a warning and uses your 10-second global away budget. After 3 warnings or 10 seconds away total, the quiz auto-submits.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -492,8 +491,8 @@ export default function StudentQuizPage() {
     window.addEventListener('resize', onWindowResize, true);
 
     isAwayRef.current = false;
-    pollFocusVisibility();
 
+    pollFocusVisibility();
     applyBodyStyles();
   };
 
@@ -501,7 +500,7 @@ export default function StudentQuizPage() {
     if (!guard() || !monitoringRef.current) return;
 
     const fullscreenOk =
-      !requireFullscreenRef.current || !!document.fullscreenElement;
+      !didEnterFullscreenRef.current || !!document.fullscreenElement;
 
     const lost =
       document.visibilityState !== 'visible' ||
@@ -511,7 +510,7 @@ export default function StudentQuizPage() {
     if (lost) {
       handleFocusLostViolation('poll:focus-visibility', () => {
         const fullscreenOkInner =
-          !requireFullscreenRef.current || !!document.fullscreenElement;
+          !didEnterFullscreenRef.current || !!document.fullscreenElement;
         return (
           document.visibilityState !== 'visible' ||
           !(document.hasFocus && document.hasFocus()) ||
@@ -671,14 +670,16 @@ export default function StudentQuizPage() {
 
   const onFullscreenChange = () => {
     if (!guard()) return;
-    if (!requireFullscreenRef.current) return; // ignore fullscreen events when not required
 
     const isFs = !!document.fullscreenElement;
 
-    if (!isFs) {
-      handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
-    } else {
+    if (isFs) {
+      // Once we enter fullscreen at least once, we start enforcing it.
+      didEnterFullscreenRef.current = true;
       handleReturnToFocus();
+    } else if (didEnterFullscreenRef.current) {
+      // Only treat leaving fullscreen as violation if we were ever in fullscreen successfully.
+      handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     }
   };
 
@@ -873,10 +874,11 @@ export default function StudentQuizPage() {
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. Any time this quiz loses focus or goes behind another
-                app/tab (including split-screen on desktop), you get a warning. After 3 warnings,
-                the quiz is blocked and auto-submitted. Leaving the quiz screen uses your{' '}
-                <span className="font-semibold">10-second total away budget</span>; once that is
-                exhausted, the quiz is auto-submitted even if warnings are less than 3.
+                app/tab (including split-screen or going to background), you get a warning.
+                After 3 warnings, the quiz is blocked and auto-submitted. Leaving the quiz
+                screen uses your{' '}
+                <span className="font-semibold">10-second total away budget</span>; once that
+                is exhausted, the quiz is auto-submitted even if warnings are less than 3.
               </p>
             </div>
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
@@ -898,8 +900,8 @@ export default function StudentQuizPage() {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
 
-    // Only show fullscreen button on non-mobile where fullscreen is meaningful
-    const showFullscreenButton = !isMobile && !document.fullscreenElement && requireFullscreenRef.current;
+    // Show fullscreen button on ALL devices whenever not in fullscreen
+    const showFullscreenButton = !document.fullscreenElement;
 
     return (
       <div className="min-h-screen bg-background">
@@ -914,6 +916,7 @@ export default function StudentQuizPage() {
                 <p className="text-xs text-muted-foreground">
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
+                {/* Show leave timer countdown if active */}
                 {leaveTimeoutRef.current !== null && leaveTimeLeft > 0 && (
                   <p className="text-xs text-warning mt-1">
                     Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
@@ -936,15 +939,15 @@ export default function StudentQuizPage() {
                     variant="outline"
                     onClick={async () => {
                       const ok = await tryEnterFullscreen(3, 300);
-                      if (!ok) {
-                        requireFullscreenRef.current = false;
-                        toast({
-                          title: 'Fullscreen blocked',
-                          description:
-                            'Fullscreen could not be enabled. Monitoring will continue without fullscreen enforcement.',
-                        });
+                      if (ok) {
+                        didEnterFullscreenRef.current = true;
                       } else {
-                        requireFullscreenRef.current = true;
+                        didEnterFullscreenRef.current = false;
+                        toast({
+                          title: 'Fullscreen not available',
+                          description:
+                            'Your device or browser did not enter fullscreen. Monitoring will still work for app/tab changes and backgrounding.',
+                        });
                       }
                     }}
                   >
