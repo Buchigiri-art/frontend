@@ -34,7 +34,6 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
-import api from '@/services/api'; // ✅ use shared axios instance
 import {
   Dialog,
   DialogContent,
@@ -176,15 +175,10 @@ export default function QuizResultsPage() {
     if (!quizId) return;
     setDownloading(true);
     try {
-      // ✅ use shared axios instance with baseURL + withCredentials
-      const response = await api.get(
-        `/quiz/${quizId}/results/download${detailed ? '?detailed=true' : ''}`,
-        {
-          responseType: 'blob',
-        }
-      );
+      // ✅ use quizAPI helper which calls /quiz/:id/results/download
+      const blob = await quizAPI.downloadResults(quizId, detailed);
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute(
@@ -798,7 +792,3 @@ export default function QuizResultsPage() {
     </div>
   );
 }
-
-
-
-

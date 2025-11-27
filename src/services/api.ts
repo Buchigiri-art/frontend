@@ -1,3 +1,4 @@
+// src/services/api.ts
 import axios from 'axios';
 import { Quiz, Student, QuizShare } from '@/types';
 
@@ -48,7 +49,9 @@ export const quizAPI = {
   },
 
   // DELETE quiz + all its attempts
-  delete: async (quizId: string): Promise<{ success: boolean; message?: string }> => {
+  delete: async (
+    quizId: string
+  ): Promise<{ success: boolean; message?: string }> => {
     const response = await api.delete(`/quiz/${quizId}`);
     return response.data;
   },
@@ -75,11 +78,28 @@ export const quizAPI = {
     const response = await api.get(`/quiz/${quizId}/results/${attemptId}`);
     return response.data;
   },
+
+  // ✅ Excel download (summary or detailed)
+  downloadResults: async (
+    quizId: string,
+    detailed: boolean = false
+  ): Promise<Blob> => {
+    const response = await api.get(
+      `/quiz/${quizId}/results/download`,
+      {
+        params: detailed ? { detailed: 'true' } : {},
+        responseType: 'blob',
+      }
+    );
+    return response.data; // this is the Blob
+  },
 };
 
 // Students API
 export const studentsAPI = {
-  upload: async (students: Student[]): Promise<{ success: boolean; count: number }> => {
+  upload: async (
+    students: Student[]
+  ): Promise<{ success: boolean; count: number }> => {
     const response = await api.post('/students/upload', { students });
     return response.data;
   },
@@ -94,12 +114,17 @@ export const studentsAPI = {
     return response.data;
   },
 
-  delete: async (studentId: string): Promise<{ success: boolean }> => {
+  delete: async (
+    studentId: string
+  ): Promise<{ success: boolean }> => {
     const response = await api.delete(`/students/${studentId}`);
     return response.data;
   },
 
-  update: async (studentId: string, data: Partial<Student>): Promise<Student> => {
+  update: async (
+    studentId: string,
+    data: Partial<Student>
+  ): Promise<Student> => {
     const response = await api.put(`/students/${studentId}`, data);
     return response.data;
   },
@@ -112,7 +137,11 @@ export const foldersAPI = {
     return response.data.folders;
   },
 
-  create: async (folderData: { name: string; description?: string; color?: string }) => {
+  create: async (folderData: {
+    name: string;
+    description?: string;
+    color?: string;
+  }) => {
     const response = await api.post('/folders', folderData);
     return response.data.folder;
   },
