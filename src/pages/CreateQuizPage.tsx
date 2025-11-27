@@ -45,15 +45,13 @@ interface UploadedFile {
   size: number;
 }
 
-// Extend Question locally so we can attach "section" etc. without touching global types.
 type ExtendedQuestion = Question & {
   section?: string;
   isSelected?: boolean;
   isBookmarked?: boolean;
 };
 
-// Batching for /quiz/share
-const SHARE_BATCH_SIZE = 100; // number of students per /quiz/share request
+const SHARE_BATCH_SIZE = 100;
 
 export default function CreateQuizPage() {
   const location = useLocation();
@@ -66,7 +64,9 @@ export default function CreateQuizPage() {
   const [questions, setQuestions] = useState<ExtendedQuestion[]>([]);
   const [generating, setGenerating] = useState(false);
   const [quizTitle, setQuizTitle] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [isSavingQuiz, setIsSavingQuiz] = useState(false);
+  const [isSharingQuiz, setIsSharingQuiz] = useState(false);
+
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
@@ -75,25 +75,23 @@ export default function CreateQuizPage() {
   const [sharedLinks, setSharedLinks] = useState<{ email: string; link: string }[]>([]);
   const [linksDialogOpen, setLinksDialogOpen] = useState(false);
 
-  // Track currently saved quizId to avoid duplicate creates
   const [currentQuizId, setCurrentQuizId] = useState<string | null>(null);
   const [shareProgress, setShareProgress] = useState<{ current: number; total: number } | null>(
     null,
   );
 
   useEffect(() => {
-    // Fetch students for sharing
     const fetchStudents = async () => {
       try {
         const data = await studentsAPI.getAll();
         setStudents(data || []);
       } catch (error) {
         console.error('Error fetching students:', error);
+        toast.error('Failed to load students');
       }
     };
     fetchStudents();
 
-    // Handle edit question from bookmarks
     if (location.state?.editQuestion) {
       const editQ = location.state.editQuestion as ExtendedQuestion;
       setQuestions([{ ...editQ, isSelected: true }]);
@@ -144,18 +142,16 @@ export default function CreateQuizPage() {
   const removeFile = (id: string) => {
     setUploadedFiles((prev) => prev.filter((f) => f.id !== id));
     toast.success('File removed');
+    setCurrentQuizId(null);
   };
 
-  // Build combined text for Gemini from ALL files and notes (no truncation)
   const buildCombinedTextForAI = (): string => {
     let combined = '';
 
-    // Add ALL uploaded file contents
     for (const f of uploadedFiles) {
       combined += f.content + '\n\n';
     }
 
-    // Add pasted notes
     if (moduleText.trim()) {
       combined += moduleText;
     }
@@ -182,10 +178,7 @@ export default function CreateQuizPage() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
       if (!apiKey) {
-        toast.error(
-          'Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env file.',
-        );
-        setGenerating(false);
+        toast.error('Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env');
         return;
       }
 
@@ -197,14 +190,12 @@ export default function CreateQuizPage() {
         customPrompt: aiPrompt || customPrompt,
       });
 
-      // Cast to ExtendedQuestion and default-select all new questions
       const extended = (generatedQuestions || []).map((q: Question) => ({
         ...(q as ExtendedQuestion),
         isSelected: true,
       }));
 
       setQuestions(extended);
-      // New quiz content => reset currentQuizId so next save/share creates a fresh quiz
       setCurrentQuizId(null);
 
       toast.success(
@@ -220,7 +211,6 @@ export default function CreateQuizPage() {
 
   const handleUpdateQuestion = (updatedQuestion: ExtendedQuestion) => {
     setQuestions((prev) => prev.map((q) => (q.id === updatedQuestion.id ? updatedQuestion : q)));
-    // Editing questions means the saved quiz (if any) is now outdated
     setCurrentQuizId(null);
     toast.success('Question updated');
   };
@@ -242,6 +232,7 @@ export default function CreateQuizPage() {
         await bookmarksAPI.create({ question });
         toast.success('Question bookmarked');
       } else {
+        // You might want to actually delete bookmark from backend here if you support that
         toast.info('Bookmark removed from this session');
       }
 
@@ -260,20 +251,19 @@ export default function CreateQuizPage() {
     );
   };
 
-  // Change section for a question
   const handleSectionChange = (id: string, section: string) => {
     setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, section } : q)));
     setCurrentQuizId(null);
   };
 
-  // Manual question creation helpers
   const createEmptyQuestion = (type: 'mcq' | 'short-answer'): ExtendedQuestion => ({
     id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    type,
-    // @ts-ignore (depending on your Question type shape)
+    // @ts-ignore (depends on your Question type)
     question: '',
+    // @ts-ignore
     answer: '',
     ...(type === 'mcq' ? { options: ['', '', '', ''] } : {}),
+    type,
     isBookmarked: false,
     isSelected: true,
     section: '',
@@ -287,6 +277,10 @@ export default function CreateQuizPage() {
 
   const handleExportJSON = () => {
     const selectedQuestions = questions.filter((q) => q.isSelected);
+    if (selectedQuestions.length === 0) {
+      toast.error('No selected questions to export');
+      return;
+    }
     const dataStr = JSON.stringify(selectedQuestions, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
@@ -299,19 +293,27 @@ export default function CreateQuizPage() {
 
   const handleCopyToClipboard = () => {
     const selectedQuestions = questions.filter((q) => q.isSelected);
+    if (selectedQuestions.length === 0) {
+      toast.error('No selected questions to copy');
+      return;
+    }
     navigator.clipboard.writeText(JSON.stringify(selectedQuestions, null, 2));
     toast.success('Questions copied to clipboard');
   };
 
-  // Save quiz to backend and return quizId (or throw)
   const saveQuizToServer = async (title: string, selectedQuestions: ExtendedQuestion[]) => {
+    const duration = parseInt(quizDuration, 10);
+    if (isNaN(duration) || duration <= 0) {
+      throw new Error('Invalid duration value');
+    }
+
     const basePayload: Partial<Quiz> = {
       title,
       questions: selectedQuestions as any,
       createdAt: new Date().toISOString(),
       numQuestions: selectedQuestions.length,
       questionType,
-      duration: parseInt(quizDuration, 10),
+      duration,
       difficulty,
     };
 
@@ -320,7 +322,8 @@ export default function CreateQuizPage() {
       : basePayload;
 
     const saveRes = await quizAPI.save(quizPayload as Quiz);
-    const quizId = saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id));
+    const quizId =
+      saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id || saveRes.quizId));
 
     if (!quizId) {
       throw new Error('Server did not return quizId');
@@ -343,7 +346,7 @@ export default function CreateQuizPage() {
       return;
     }
 
-    setSaving(true);
+    setIsSavingQuiz(true);
     try {
       const quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       toast.success('Quiz saved successfully!');
@@ -353,7 +356,7 @@ export default function CreateQuizPage() {
       toast.error(error?.message || 'Failed to save quiz');
       throw error;
     } finally {
-      setSaving(false);
+      setIsSavingQuiz(false);
     }
   };
 
@@ -378,7 +381,7 @@ export default function CreateQuizPage() {
           description: `${selectedQuestions.length} questions`,
           questions: selectedQuestions as any,
           numQuestions: selectedQuestions.length,
-          questionType: questionType,
+          questionType,
           duration: parseInt(quizDuration, 10),
           difficulty,
         },
@@ -391,8 +394,6 @@ export default function CreateQuizPage() {
     }
   };
 
-  // Robust share flow with batching: save once (if needed), then send in chunks of 100
-  // ALWAYS forceResend: true → new token + new email every time
   const handleShareQuiz = async () => {
     if (selectedStudents.length === 0) {
       toast.error('Please select at least one student');
@@ -410,29 +411,28 @@ export default function CreateQuizPage() {
       return;
     }
 
-    setSaving(true);
+    setIsSharingQuiz(true);
     setShareProgress(null);
 
     try {
-      // 1) Ensure quiz is saved; but avoid duplicate create
+      // Ensure quiz is saved (create or update)
       let quizId = currentQuizId;
       if (!quizId) {
         quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       }
 
-      // 2) Build array of valid emails
+      // Resolve selected student IDs to emails
       let studentEmails = (selectedStudents || [])
         .map((s) => {
           if (typeof s === 'string' && s.includes('@')) return s.trim();
 
-          // Some tables pass serialized objects; try to parse
           try {
             const parsed = JSON.parse(String(s));
             if (parsed && typeof parsed === 'object' && parsed.email) {
               return String(parsed.email).trim();
             }
-          } catch (_) {
-            /* ignore */
+          } catch {
+            // ignore
           }
 
           const found = students.find(
@@ -442,21 +442,18 @@ export default function CreateQuizPage() {
         })
         .filter(Boolean);
 
-      // de-duplicate
       studentEmails = Array.from(new Set(studentEmails)).filter(
         (email) => typeof email === 'string' && email.includes('@'),
       );
 
       if (studentEmails.length === 0) {
         toast.error('No valid student emails to share to');
-        setSaving(false);
         return;
       }
 
       const total = studentEmails.length;
       const allLinks: Array<{ email: string; link: string }> = [];
 
-      // 3) Batch the share calls
       for (let i = 0; i < studentEmails.length; i += SHARE_BATCH_SIZE) {
         const batchEmails = studentEmails.slice(i, i + SHARE_BATCH_SIZE);
 
@@ -469,14 +466,10 @@ export default function CreateQuizPage() {
           quizId,
           studentEmails: batchEmails,
           links: [],
-          // 👇 IMPORTANT: always request a fresh token + fresh email
           forceResend: true,
         };
 
-        // Backend now always returns 200 + success:true for valid requests
         const result: any = await quizAPI.share(sharePayload);
-
-        // We ONLY care about the fresh links from this call
         const linksFromResult = Array.isArray(result.links) ? result.links : [];
 
         linksFromResult.forEach((l: any) => {
@@ -522,7 +515,7 @@ export default function CreateQuizPage() {
         toast.error(err?.message || 'Failed to share quiz');
       }
     } finally {
-      setSaving(false);
+      setIsSharingQuiz(false);
       setShareProgress(null);
     }
   };
@@ -530,12 +523,20 @@ export default function CreateQuizPage() {
   const selectedCount = questions.filter((q) => q.isSelected).length;
 
   const copyAllLinks = async () => {
+    if (sharedLinks.length === 0) {
+      toast.error('No links to copy');
+      return;
+    }
     const text = sharedLinks.map((l) => `${l.email}: ${l.link}`).join('\n');
     await navigator.clipboard.writeText(text);
     toast.success('Links copied to clipboard');
   };
 
   const downloadLinksAsCSV = () => {
+    if (sharedLinks.length === 0) {
+      toast.error('No links to download');
+      return;
+    }
     const csv = sharedLinks.map((l) => `${l.email},${l.link}`).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -682,7 +683,7 @@ export default function CreateQuizPage() {
                       id="question-type"
                       className="mt-2 h-9 md:h-10 text-xs md:text-sm"
                     >
-                      <SelectValue />
+                      <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="mcq">Multiple Choice</SelectItem>
@@ -701,7 +702,7 @@ export default function CreateQuizPage() {
                       id="difficulty"
                       className="mt-2 h-9 md:h-10 text-xs md:text-sm"
                     >
-                      <SelectValue />
+                      <SelectValue placeholder="Select difficulty" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="easy">Easy</SelectItem>
@@ -817,11 +818,21 @@ export default function CreateQuizPage() {
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleExportJSON}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExportJSON}
+                    disabled={selectedCount === 0}
+                  >
                     <Download className="h-4 w-4 mr-1" />
                     Export JSON
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handleCopyToClipboard}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyToClipboard}
+                    disabled={selectedCount === 0}
+                  >
                     <Copy className="h-4 w-4 mr-1" />
                     Copy
                   </Button>
@@ -888,11 +899,11 @@ export default function CreateQuizPage() {
               <div className="flex flex-col md:flex-row gap-3">
                 <Button
                   onClick={handleSaveQuiz}
-                  disabled={saving || selectedCount === 0}
+                  disabled={isSavingQuiz || selectedCount === 0}
                   className="flex-1 gradient-primary hover:opacity-90"
                 >
                   <Save className="h-4 w-4 mr-2" />
-                  {saving ? 'Saving...' : 'Save Quiz (Backend)'}
+                  {isSavingQuiz ? 'Saving Quiz...' : 'Save Quiz (Backend)'}
                 </Button>
 
                 <Button
@@ -916,12 +927,13 @@ export default function CreateQuizPage() {
                       Share Quiz
                     </Button>
                   </DialogTrigger>
-                  {/* Dialog alignment & progress */}
+
                   <DialogContent className="sm:max-w-4xl w-[95vw] max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
                       <DialogTitle>Share Quiz with Students</DialogTitle>
                       <DialogDescription>
-                        Select students to share this quiz with. Unique links will be generated.
+                        Select students to share this quiz with. Unique links will be generated and
+                        sent to their email. Delivery time depends on your email provider.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="mt-4 space-y-4">
@@ -940,11 +952,11 @@ export default function CreateQuizPage() {
                       <div className="flex justify-end">
                         <Button
                           onClick={handleShareQuiz}
-                          disabled={selectedStudents.length === 0 || saving}
+                          disabled={selectedStudents.length === 0 || isSharingQuiz}
                           className="w-full sm:w-auto gradient-primary"
                         >
-                          {saving
-                            ? 'Generating & Sharing...'
+                          {isSharingQuiz
+                            ? 'Generating & Sending Links...'
                             : `Generate & Share Links (${selectedStudents.length} students)`}
                         </Button>
                       </div>
@@ -957,13 +969,14 @@ export default function CreateQuizPage() {
         </>
       )}
 
-      {/* Links Dialog: shows generated links after share */}
+      {/* Links Dialog */}
       <Dialog open={linksDialogOpen} onOpenChange={setLinksDialogOpen}>
         <DialogContent className="sm:max-w-2xl w-[95vw]">
           <DialogHeader>
             <DialogTitle>Generated Quiz Links</DialogTitle>
             <DialogDescription>
-              Copy or download links for distribution to your students.
+              Copy or download links for distribution to your students. Email delivery can still be
+              delayed by your mail provider; you can send these links manually if needed.
             </DialogDescription>
           </DialogHeader>
 
