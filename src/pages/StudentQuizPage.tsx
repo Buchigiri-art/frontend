@@ -16,7 +16,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total away budget
 const SPLIT_DIM_THRESHOLD = 0.8;
-const VIOLATION_COOLDOWN_MS = 3000; // 3 seconds cooldown between warnings
+const VIOLATION_COOLDOWN_MS = 3000; // still used for non-focus violations
 
 const isMobile =
   typeof navigator !== 'undefined' &&
@@ -63,7 +63,7 @@ export default function StudentQuizPage() {
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
 
-  // For leave timer UI countdown display
+  // For leave timer UI countdown display (milliseconds)
   const [leaveTimeLeft, setLeaveTimeLeft] = useState<number>(LEAVE_BUDGET_MS);
 
   // Refs for stale closures & timing
@@ -75,6 +75,9 @@ export default function StudentQuizPage() {
   const attemptIdRef = useRef('');
   const quizActiveRef = useRef(false);
   const quizSubmittedRef = useRef(false);
+
+  // Tracks whether we are currently in an "away episode"
+  const isAwayRef = useRef(false);
 
   // Leave timer refs
   const leaveTimeoutRef = useRef<number | null>(null);
@@ -184,6 +187,12 @@ export default function StudentQuizPage() {
       setStudentYear(info.year || '');
       setStudentSemester(info.semester || '');
 
+      // reset away budget
+      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
+      setLeaveTimeLeft(LEAVE_BUDGET_MS);
+      clearLeaveTimer();
+      isAwayRef.current = false;
+
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
         setAnswers(new Array(data.quiz.questions.length).fill(''));
@@ -191,10 +200,6 @@ export default function StudentQuizPage() {
         setQuizStarted(true);
         applyBodyStyles();
         setShowInfoForm(false);
-
-        remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
-        clearLeaveTimer();
-        setLeaveTimeLeft(LEAVE_BUDGET_MS);
       } else {
         setShowInfoForm(true);
       }
@@ -253,6 +258,8 @@ export default function StudentQuizPage() {
 
       remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
       setLeaveTimeLeft(LEAVE_BUDGET_MS);
+      clearLeaveTimer();
+      isAwayRef.current = false;
 
       applyBodyStyles();
 
@@ -260,12 +267,10 @@ export default function StudentQuizPage() {
 
       setQuizStarted(true);
 
-      clearLeaveTimer();
-
       toast({
         title: 'Quiz Started',
         description:
-          'Quiz is monitored. Any focus loss (tab switch, app switch, fullscreen exit, split-screen) triggers warnings. After 3 warnings or 10s away time, quiz auto-submits.',
+          'Monitoring is enabled. Any focus loss (tab/app change, fullscreen exit, split-screen) gives a warning and starts a 10-second global away timer. After 3 warnings or full 10 seconds away, the quiz auto-submits.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -421,13 +426,8 @@ export default function StudentQuizPage() {
       });
     }, 250);
 
-    toast({
-      title: `Warning ${localWarningsRef.current + 1} / ${MAX_WARNINGS}`,
-      description: `Focus lost detected (${reason}). You have ${Math.ceil(
-        remainingLeaveMsRef.current / 1000,
-      )} second${remainingLeaveMsRef.current > 1000 ? 's' : ''} left to return.`,
-      variant: 'default',
-    });
+    // NOTE: we do NOT toast here to avoid duplicate warning toasts.
+    // The warning toast is handled in sendFlag().
   };
 
   // Clears and pauses the leave timer and interval, updates remaining time accurately
@@ -454,6 +454,14 @@ export default function StudentQuizPage() {
     return true;
   };
 
+  // Called when we are fully back in focus/visible/fullscreen state
+  const handleReturnToFocus = () => {
+    if (!quizActiveRef.current || quizSubmittedRef.current) return;
+    if (!isAwayRef.current) return;
+    isAwayRef.current = false;
+    clearLeaveTimer();
+  };
+
   // ---------------- Monitoring event management -----------------
   const enableMonitoring = () => {
     if (monitoringRef.current) return;
@@ -472,6 +480,7 @@ export default function StudentQuizPage() {
 
     window.addEventListener('resize', onWindowResize, true);
 
+    isAwayRef.current = false;
     pollFocusVisibility();
 
     applyBodyStyles();
@@ -481,11 +490,12 @@ export default function StudentQuizPage() {
   const pollFocusVisibility = useCallback(() => {
     if (!guard() || !monitoringRef.current) return;
 
-    if (
+    const lost =
       document.visibilityState !== 'visible' ||
       !(document.hasFocus && document.hasFocus()) ||
-      !document.fullscreenElement
-    ) {
+      !document.fullscreenElement;
+
+    if (lost) {
       handleFocusLostViolation('poll:focus-visibility', () => {
         return (
           document.visibilityState !== 'visible' ||
@@ -494,7 +504,7 @@ export default function StudentQuizPage() {
         );
       });
     } else {
-      clearLeaveTimer();
+      handleReturnToFocus();
     }
 
     requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
@@ -522,7 +532,7 @@ export default function StudentQuizPage() {
   const sendFlag = async (reason: string) => {
     const now = performance.now();
     if (now - (lastWarnAtRef.current || 0) < 750) {
-      return;
+      return; // throttle toast/flag spam
     }
     lastWarnAtRef.current = now;
 
@@ -549,23 +559,40 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ------------------ Unified focus loss handler with cooldown ------------------
+  // ------------------ Unified focus-loss handler ------------------
+  // IMPORTANT: This ensures only ONE warning per "away episode",
+  // and the 10-second global timer continues from where it stopped.
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
-    const now = performance.now();
-    if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) {
-      return; // prevent rapid repeated warnings
-    }
-    lastViolationTimeRef.current = now;
-
-    if (localWarningsRef.current < MAX_WARNINGS) {
-      sendFlag(reasonBase);
-      if (leaveTimeoutRef.current === null) {
+    // If we are already away, don't stack new warnings. Just make sure timer is running.
+    if (isAwayRef.current) {
+      if (leaveTimeoutRef.current === null && remainingLeaveMsRef.current > 0) {
         startLeaveTimer(reasonBase, stillAwayCheck);
       }
+      return;
     }
 
+    // Start a new "away" episode
+    isAwayRef.current = true;
+
+    // Increment warning once for this episode
+    if (localWarningsRef.current < MAX_WARNINGS) {
+      sendFlag(reasonBase);
+    }
+
+    // If no away budget left, auto-submit immediately
+    if (remainingLeaveMsRef.current <= 0) {
+      handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
+      return;
+    }
+
+    // Start global away timer (continues from remainingLeaveMsRef)
+    if (leaveTimeoutRef.current === null) {
+      startLeaveTimer(reasonBase, stillAwayCheck);
+    }
+
+    // If warnings hit limit, auto-submit
     if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat(`${reasonBase}:max-warnings`);
     }
@@ -602,7 +629,7 @@ export default function StudentQuizPage() {
     if (!guard()) return;
 
     if (document.visibilityState === 'visible') {
-      clearLeaveTimer();
+      handleReturnToFocus();
       return;
     }
 
@@ -617,7 +644,7 @@ export default function StudentQuizPage() {
 
   const onWindowFocus = () => {
     if (!guard()) return;
-    clearLeaveTimer();
+    handleReturnToFocus();
   };
 
   const onWindowBlur = () => {
@@ -641,7 +668,7 @@ export default function StudentQuizPage() {
     if (!isFs) {
       handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     } else {
-      clearLeaveTimer();
+      handleReturnToFocus();
     }
   };
 
@@ -653,7 +680,14 @@ export default function StudentQuizPage() {
   const onCopyAttempt = (e: ClipboardEvent) => {
     if (!guard()) return;
     e.preventDefault();
-    sendFlag('clipboard:copy');
+    // Copy is a violation but does NOT start away timer.
+    const now = performance.now();
+    if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) return;
+    lastViolationTimeRef.current = now;
+
+    if (localWarningsRef.current < MAX_WARNINGS) {
+      sendFlag('clipboard:copy');
+    }
     if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat('clipboard:copy:max-warnings');
     }
@@ -670,7 +704,13 @@ export default function StudentQuizPage() {
   const onContextMenu = (e: Event) => {
     if (!guard()) return;
     e.preventDefault();
-    sendFlag('contextmenu:block');
+    const now = performance.now();
+    if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) return;
+    lastViolationTimeRef.current = now;
+
+    if (localWarningsRef.current < MAX_WARNINGS) {
+      sendFlag('contextmenu:block');
+    }
     if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat('contextmenu:block:max-warnings');
     }
@@ -692,7 +732,13 @@ export default function StudentQuizPage() {
 
     if (reason) {
       e.preventDefault();
-      sendFlag(reason);
+      const now = performance.now();
+      if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) return;
+      lastViolationTimeRef.current = now;
+
+      if (localWarningsRef.current < MAX_WARNINGS) {
+        sendFlag(reason);
+      }
       if (localWarningsRef.current >= MAX_WARNINGS) {
         handleAutoSubmitAsCheat(`${reason}:max-warnings`);
       }
@@ -704,7 +750,8 @@ export default function StudentQuizPage() {
     try {
       const body = document.body;
       if (!body.dataset.prevUserSelect) body.dataset.prevUserSelect = body.style.userSelect || '';
-      if (!body.dataset.prevWebkitTouchCallout) body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
+      if (!body.dataset.prevWebkitTouchCallout)
+        body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
       if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
 
@@ -720,10 +767,14 @@ export default function StudentQuizPage() {
   const restoreBodyStyles = () => {
     try {
       const body = document.body;
-      if (body.dataset.prevUserSelect !== undefined) body.style.userSelect = body.dataset.prevUserSelect;
-      if (body.dataset.prevWebkitTouchCallout !== undefined) (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
-      if (body.dataset.prevTouchAction !== undefined) body.style.touchAction = body.dataset.prevTouchAction;
-      if (body.dataset.prevOverflow !== undefined) body.style.overflow = body.dataset.prevOverflow;
+      if (body.dataset.prevUserSelect !== undefined)
+        body.style.userSelect = body.dataset.prevUserSelect;
+      if (body.dataset.prevWebkitTouchCallout !== undefined)
+        (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
+      if (body.dataset.prevTouchAction !== undefined)
+        body.style.touchAction = body.dataset.prevTouchAction;
+      if (body.dataset.prevOverflow !== undefined)
+        body.style.overflow = body.dataset.prevOverflow;
 
       delete body.dataset.prevUserSelect;
       delete body.dataset.prevWebkitTouchCallout;
@@ -778,7 +829,9 @@ export default function StudentQuizPage() {
         <Card className="max-w-md w-full">
           <CardHeader>
             <CardTitle>{quiz.title}</CardTitle>
-            <CardDescription>{quiz.description || 'Confirm your details to start the quiz'}</CardDescription>
+            <CardDescription>
+              {quiz.description || 'Confirm your details to start the quiz'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -810,13 +863,12 @@ export default function StudentQuizPage() {
             <div>
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
-                Monitoring is enabled. Any time this quiz loses focus or goes behind
-                another app/tab (including split-screen or partial window), you get a
-                warning. After 3 warnings, the quiz is blocked and auto-submitted. Leaving
-                the quiz screen uses your{' '}
-                <span className="font-semibold">10-second total away budget</span>; once
-                that is exhausted, the quiz is auto-submitted even if warnings are less
-                than 3.
+                Monitoring is enabled. Any time this quiz loses focus or goes behind another
+                app/tab (including split-screen or partial window), you get a warning. After 3
+                warnings, the quiz is blocked and auto-submitted. Leaving the quiz screen uses
+                your{' '}
+                <span className="font-semibold">10-second total away budget</span>; once that is
+                exhausted, the quiz is auto-submitted even if warnings are less than 3.
               </p>
             </div>
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
@@ -855,8 +907,8 @@ export default function StudentQuizPage() {
                 {/* Show leave timer countdown if active */}
                 {leaveTimeoutRef.current !== null && leaveTimeLeft > 0 && (
                   <p className="text-xs text-warning mt-1">
-                    Warning timer: {Math.ceil(leaveTimeLeft / 1000)} second
-                    {leaveTimeLeft > 1000 ? 's' : ''} left
+                    Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
+                    {leaveTimeLeft > 1000 ? 's' : ''} left (global 10s limit)
                   </p>
                 )}
               </div>
@@ -964,7 +1016,9 @@ export default function StudentQuizPage() {
                 ) : (
                   <Button
                     onClick={() =>
-                      setCurrentQuestion(Math.min(quiz.questions.length - 1, currentQuestion + 1))
+                      setCurrentQuestion(
+                        Math.min(quiz.questions.length - 1, currentQuestion + 1),
+                      )
                     }
                   >
                     Next
