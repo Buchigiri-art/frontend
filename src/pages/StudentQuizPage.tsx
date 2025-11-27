@@ -63,7 +63,10 @@ export default function StudentQuizPage() {
   const [warningCount, setWarningCount] = useState(0);
   const [isCheated, setIsCheated] = useState(false);
 
-  // Refs for accurate timing and stale closure avoidance
+  // For leave timer UI countdown display
+  const [leaveTimeLeft, setLeaveTimeLeft] = useState<number>(LEAVE_BUDGET_MS);
+
+  // Refs for stale closures & timing
   const localWarningsRef = useRef(0);
   const lastWarnAtRef = useRef(0);
   const lastViolationTimeRef = useRef(0);
@@ -73,14 +76,16 @@ export default function StudentQuizPage() {
   const quizActiveRef = useRef(false);
   const quizSubmittedRef = useRef(false);
 
+  // Leave timer refs
   const leaveTimeoutRef = useRef<number | null>(null);
+  const leaveTimerIntervalRef = useRef<number | null>(null);
   const leaveStartAtRef = useRef<number | null>(null);
   const remainingLeaveMsRef = useRef(LEAVE_BUDGET_MS);
 
   attemptIdRef.current = attemptId;
   tokenRef.current = token;
 
-  // Initial data load
+  // ------------------- Initial data load -------------------
   useEffect(() => {
     tokenRef.current = token;
     fetchQuizData();
@@ -94,7 +99,7 @@ export default function StudentQuizPage() {
     };
   }, [token]);
 
-  // Enable/disable monitoring on quiz start/submit
+  // ----------------- Monitoring enable/disable -----------------
   useEffect(() => {
     if (quizStarted && !quizSubmitted) {
       quizActiveRef.current = true;
@@ -113,7 +118,7 @@ export default function StudentQuizPage() {
     }
   }, [quizStarted, quizSubmitted]);
 
-  // Timer countdown with drift correction
+  // ------------- Timer countdown with drift correction -----------------
   useEffect(() => {
     if (!quizStarted || quizSubmitted || timeLeft <= 0) return;
 
@@ -141,11 +146,10 @@ export default function StudentQuizPage() {
     };
 
     const timerId = setTimeout(tick, 1000);
-
     return () => clearTimeout(timerId);
   }, [quizStarted, timeLeft, quizSubmitted]);
 
-  // Fetch quiz and attempt data
+  // ------------- Fetch quiz and attempt data -----------------
   const fetchQuizData = async () => {
     try {
       const res = await axios.get(`${API_URL}/student-quiz/attempt/${token}`);
@@ -164,6 +168,7 @@ export default function StudentQuizPage() {
 
       setQuiz(data.quiz);
       setEmail(data.studentInfo?.email || data.email || '');
+
       if (typeof data.warningCount === 'number') {
         localWarningsRef.current = data.warningCount;
         setWarningCount(data.warningCount);
@@ -189,6 +194,7 @@ export default function StudentQuizPage() {
 
         remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
         clearLeaveTimer();
+        setLeaveTimeLeft(LEAVE_BUDGET_MS);
       } else {
         setShowInfoForm(true);
       }
@@ -205,7 +211,7 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Start quiz after confirming student info and reset warnings
+  // ------------------------ Start quiz with warning reset ------------------------
   const handleStartQuiz = async () => {
     if (
       !studentName.trim() ||
@@ -239,10 +245,14 @@ export default function StudentQuizPage() {
       setQuiz(res.data.quiz);
       setShowInfoForm(false);
 
+      // Reset warnings and timers
       localWarningsRef.current = 0;
       setWarningCount(0);
       lastViolationTimeRef.current = 0;
       lastWarnAtRef.current = 0;
+
+      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
+      setLeaveTimeLeft(LEAVE_BUDGET_MS);
 
       applyBodyStyles();
 
@@ -250,7 +260,6 @@ export default function StudentQuizPage() {
 
       setQuizStarted(true);
 
-      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
       clearLeaveTimer();
 
       toast({
@@ -270,6 +279,7 @@ export default function StudentQuizPage() {
     }
   };
 
+  // ------------------- Submit quiz --------------------
   const handleSubmitQuiz = async () => {
     if (submitting || quizSubmittedRef.current) return;
 
@@ -303,6 +313,7 @@ export default function StudentQuizPage() {
     }
   };
 
+  // ------------------ Auto-submit as cheated --------------------
   const handleAutoSubmitAsCheat = async (reason = 'violation:auto-submit') => {
     if (quizSubmittedRef.current) return;
 
@@ -340,13 +351,14 @@ export default function StudentQuizPage() {
     });
   };
 
+  // ------------- Handle answer change --------------
   const handleAnswerChange = (value: string) => {
     const newAnswers = [...answers];
     newAnswers[currentQuestion] = value;
     setAnswers(newAnswers);
   };
 
-  // Fullscreen attempts with retry
+  // ------------------ Try enter fullscreen -----------------
   const tryEnterFullscreen = async (retries = 3, delayMs = 300): Promise<boolean> => {
     const attemptFS = async (): Promise<boolean> => {
       try {
@@ -367,7 +379,8 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // Leave timer management with precision
+  // ------------- Leave timer management ----------------
+  // Starts a countdown for remaining allowed leave time, firing auto-submit on expiry
   const startLeaveTimer = (reason: string, stillAwayCheck: () => boolean) => {
     if (quizSubmittedRef.current) return;
 
@@ -379,37 +392,69 @@ export default function StudentQuizPage() {
     if (leaveTimeoutRef.current != null) return;
 
     leaveStartAtRef.current = performance.now();
+    setLeaveTimeLeft(remainingLeaveMsRef.current);
 
     leaveTimeoutRef.current = window.setTimeout(() => {
       leaveTimeoutRef.current = null;
       remainingLeaveMsRef.current = 0;
       leaveStartAtRef.current = null;
+      setLeaveTimeLeft(0);
 
       if (!guard()) return;
       if (stillAwayCheck()) {
         handleAutoSubmitAsCheat(`${reason}:timeout`);
       }
     }, remainingLeaveMsRef.current);
+
+    // UI countdown interval updates leaveTimeLeft in state every 250ms for display
+    if (leaveTimerIntervalRef.current) {
+      clearInterval(leaveTimerIntervalRef.current);
+    }
+    leaveTimerIntervalRef.current = window.setInterval(() => {
+      setLeaveTimeLeft((prev) => {
+        if (prev <= 250) {
+          clearInterval(leaveTimerIntervalRef.current!);
+          leaveTimerIntervalRef.current = null;
+          return 0;
+        }
+        return prev - 250;
+      });
+    }, 250);
+
+    toast({
+      title: `Warning ${localWarningsRef.current + 1} / ${MAX_WARNINGS}`,
+      description: `Focus lost detected (${reason}). You have ${Math.ceil(
+        remainingLeaveMsRef.current / 1000,
+      )} second${remainingLeaveMsRef.current > 1000 ? 's' : ''} left to return.`,
+      variant: 'default',
+    });
   };
 
+  // Clears and pauses the leave timer and interval, updates remaining time accurately
   const clearLeaveTimer = () => {
     if (leaveTimeoutRef.current !== null) {
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
     }
+    if (leaveTimerIntervalRef.current !== null) {
+      clearInterval(leaveTimerIntervalRef.current);
+      leaveTimerIntervalRef.current = null;
+    }
     if (leaveStartAtRef.current !== null) {
       const usedMs = performance.now() - leaveStartAtRef.current;
       remainingLeaveMsRef.current = Math.max(0, remainingLeaveMsRef.current - usedMs);
       leaveStartAtRef.current = null;
+      setLeaveTimeLeft(remainingLeaveMsRef.current);
     }
   };
 
+  // Helper to check if quiz is active and not submitted
   const guard = () => {
     if (!quizActiveRef.current || quizSubmittedRef.current) return false;
     return true;
   };
 
-  // Start monitoring listeners strictly
+  // ---------------- Monitoring event management -----------------
   const enableMonitoring = () => {
     if (monitoringRef.current) return;
     monitoringRef.current = true;
@@ -432,7 +477,7 @@ export default function StudentQuizPage() {
     applyBodyStyles();
   };
 
-  // Poll for continuous focus/visibility violations
+  // Continuous polling every ~250ms to catch issues missed by events
   const pollFocusVisibility = useCallback(() => {
     if (!guard() || !monitoringRef.current) return;
 
@@ -455,7 +500,6 @@ export default function StudentQuizPage() {
     requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
   }, []);
 
-  // Remove all event listeners for monitoring
   const removeMonitoringListeners = () => {
     if (!monitoringRef.current) return;
     monitoringRef.current = false;
@@ -474,7 +518,7 @@ export default function StudentQuizPage() {
     window.removeEventListener('resize', onWindowResize, true);
   };
 
-  // Send warning flags with 750ms debounce and console log for tracing
+  // ---------------- Warnings management ----------------
   const sendFlag = async (reason: string) => {
     const now = performance.now();
     if (now - (lastWarnAtRef.current || 0) < 750) {
@@ -505,27 +549,29 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Cooldown-enforced unified focus loss handler
+  // ------------------ Unified focus loss handler with cooldown ------------------
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
     const now = performance.now();
     if (now - lastViolationTimeRef.current < VIOLATION_COOLDOWN_MS) {
-      // Skip if within cooldown to prevent rapid multiple warnings
-      return;
+      return; // prevent rapid repeated warnings
     }
     lastViolationTimeRef.current = now;
 
-    sendFlag(reasonBase);
+    if (localWarningsRef.current < MAX_WARNINGS) {
+      sendFlag(reasonBase);
+      if (leaveTimeoutRef.current === null) {
+        startLeaveTimer(reasonBase, stillAwayCheck);
+      }
+    }
+
     if (localWarningsRef.current >= MAX_WARNINGS) {
       handleAutoSubmitAsCheat(`${reasonBase}:max-warnings`);
-    } else {
-      startLeaveTimer(reasonBase, stillAwayCheck);
     }
   };
 
-  // Event Handlers
-
+  // ------------- Event listeners ---------------
   const onWindowResize = () => {
     if (!guard()) return;
 
@@ -578,7 +624,6 @@ export default function StudentQuizPage() {
     if (!guard()) return;
 
     const firedAt = performance.now();
-
     setTimeout(() => {
       if (!guard()) return;
       if (document.hasFocus && document.hasFocus()) return;
@@ -654,7 +699,7 @@ export default function StudentQuizPage() {
     }
   };
 
-  // Body styles to prevent copy/select/scaling during quiz
+  // ---------------- Body styles ----------------
   const applyBodyStyles = () => {
     try {
       const body = document.body;
@@ -668,7 +713,7 @@ export default function StudentQuizPage() {
       body.style.touchAction = 'manipulation';
       body.style.overflow = 'hidden';
     } catch {
-      // ignore errors silently
+      // ignore
     }
   };
 
@@ -689,14 +734,14 @@ export default function StudentQuizPage() {
     }
   };
 
+  // ------------- Format time for display ---------------
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // UI rendering code omitted for brevity: keep same as your original snippet
-
+  // ------------------ UI ----------------------
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -768,7 +813,8 @@ export default function StudentQuizPage() {
                 Monitoring is enabled. Any time this quiz loses focus or goes behind
                 another app/tab (including split-screen or partial window), you get a
                 warning. After 3 warnings, the quiz is blocked and auto-submitted. Leaving
-                the quiz screen uses your <span className="font-semibold">10-second total away budget</span>; once
+                the quiz screen uses your{' '}
+                <span className="font-semibold">10-second total away budget</span>; once
                 that is exhausted, the quiz is auto-submitted even if warnings are less
                 than 3.
               </p>
@@ -806,6 +852,13 @@ export default function StudentQuizPage() {
                 <p className="text-xs text-muted-foreground">
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
+                {/* Show leave timer countdown if active */}
+                {leaveTimeoutRef.current !== null && leaveTimeLeft > 0 && (
+                  <p className="text-xs text-warning mt-1">
+                    Warning timer: {Math.ceil(leaveTimeLeft / 1000)} second
+                    {leaveTimeLeft > 1000 ? 's' : ''} left
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2 text-lg font-semibold">
                 <Clock
@@ -952,7 +1005,7 @@ export default function StudentQuizPage() {
     );
   }
 
-  // Fallback for quiz not found
+  // ---------------- Quiz not found fallback ----------------
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="max-w-md w-full">
