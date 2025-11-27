@@ -85,14 +85,25 @@ export default function StudentQuizPage() {
   // Only after this is true, we enforce "fullscreen exit" as a violation.
   const didEnterFullscreenRef = useRef(false);
 
-  // Leave timer refs
-  const leaveTimeoutRef = useRef<number | null>(null);
-  const leaveTimerIntervalRef = useRef<number | null>(null);
-  const leaveStartAtRef = useRef<number | null>(null);
-  const remainingLeaveMsRef = useRef(LEAVE_BUDGET_MS);
+  // Global away-time accounting:
+  // total away time across past episodes (ms)
+  const usedLeaveMsRef = useRef(0);
+  // start time (Date.now) of current away episode
+  const awayStartAtRef = useRef<number | null>(null);
 
   attemptIdRef.current = attemptId;
   tokenRef.current = token;
+
+  // Helper: how much leave time remains, based on wall-clock time
+  const getRemainingLeaveMs = () => {
+    const baseUsed = usedLeaveMsRef.current;
+    if (isAwayRef.current && awayStartAtRef.current !== null) {
+      const now = Date.now();
+      const extra = now - awayStartAtRef.current;
+      return Math.max(0, LEAVE_BUDGET_MS - (baseUsed + extra));
+    }
+    return Math.max(0, LEAVE_BUDGET_MS - baseUsed);
+  };
 
   // ------------------- Initial data load -------------------
   useEffect(() => {
@@ -194,12 +205,11 @@ export default function StudentQuizPage() {
       setStudentSemester(info.semester || '');
 
       // reset away budget
-      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
-      setLeaveTimeLeft(LEAVE_BUDGET_MS);
-      clearLeaveTimer();
+      usedLeaveMsRef.current = 0;
+      awayStartAtRef.current = null;
       isAwayRef.current = false;
       setIsAway(false);
-      didEnterFullscreenRef.current = false;
+      setLeaveTimeLeft(LEAVE_BUDGET_MS);
 
       if (data.hasStarted && data.attemptId) {
         setAttemptId(data.attemptId);
@@ -258,18 +268,17 @@ export default function StudentQuizPage() {
       setQuiz(res.data.quiz);
       setShowInfoForm(false);
 
-      // Reset warnings and timers
+      // Reset warnings and away timers
       localWarningsRef.current = 0;
       setWarningCount(0);
       lastViolationTimeRef.current = 0;
       lastWarnAtRef.current = 0;
 
-      remainingLeaveMsRef.current = LEAVE_BUDGET_MS;
-      setLeaveTimeLeft(LEAVE_BUDGET_MS);
-      clearLeaveTimer();
+      usedLeaveMsRef.current = 0;
+      awayStartAtRef.current = null;
       isAwayRef.current = false;
       setIsAway(false);
-      didEnterFullscreenRef.current = false;
+      setLeaveTimeLeft(LEAVE_BUDGET_MS);
 
       applyBodyStyles();
 
@@ -406,62 +415,13 @@ export default function StudentQuizPage() {
     return false;
   };
 
-  // ------------- Leave timer management ----------------
-  const startLeaveTimer = (reason: string, stillAwayCheck: () => boolean) => {
-    if (quizSubmittedRef.current) return;
-
-    if (remainingLeaveMsRef.current <= 0) {
-      handleAutoSubmitAsCheat(`${reason}:no-budget-left`);
-      return;
-    }
-
-    if (leaveTimeoutRef.current != null) return;
-
-    leaveStartAtRef.current = performance.now();
-    setLeaveTimeLeft(remainingLeaveMsRef.current);
-
-    leaveTimeoutRef.current = window.setTimeout(() => {
-      leaveTimeoutRef.current = null;
-      remainingLeaveMsRef.current = 0;
-      leaveStartAtRef.current = null;
-      setLeaveTimeLeft(0);
-
-      if (!guard()) return;
-      if (stillAwayCheck()) {
-        handleAutoSubmitAsCheat(`${reason}:timeout`);
-      }
-    }, remainingLeaveMsRef.current);
-
-    if (leaveTimerIntervalRef.current) {
-      clearInterval(leaveTimerIntervalRef.current);
-    }
-    leaveTimerIntervalRef.current = window.setInterval(() => {
-      setLeaveTimeLeft((prev) => {
-        if (prev <= 250) {
-          clearInterval(leaveTimerIntervalRef.current!);
-          leaveTimerIntervalRef.current = null;
-          return 0;
-        }
-        return prev - 250;
-      });
-    }, 250);
-  };
-
+  // ------------- Leave timer reset (on quiz end/cleanup) ----------------
   const clearLeaveTimer = () => {
-    if (leaveTimeoutRef.current !== null) {
-      clearTimeout(leaveTimeoutRef.current);
-      leaveTimeoutRef.current = null;
-    }
-    if (leaveTimerIntervalRef.current !== null) {
-      clearInterval(leaveTimerIntervalRef.current);
-      leaveTimerIntervalRef.current = null;
-    }
-    if (leaveStartAtRef.current !== null) {
-      const usedMs = performance.now() - leaveStartAtRef.current;
-      remainingLeaveMsRef.current = Math.max(0, remainingLeaveMsRef.current - usedMs);
-      leaveStartAtRef.current = null;
-      setLeaveTimeLeft(remainingLeaveMsRef.current);
-    }
+    usedLeaveMsRef.current = 0;
+    awayStartAtRef.current = null;
+    isAwayRef.current = false;
+    setIsAway(false);
+    setLeaveTimeLeft(LEAVE_BUDGET_MS);
   };
 
   const guard = () => {
@@ -472,9 +432,18 @@ export default function StudentQuizPage() {
   const handleReturnToFocus = () => {
     if (!quizActiveRef.current || quizSubmittedRef.current) return;
     if (!isAwayRef.current) return;
+
+    // Finish current away episode and accumulate used time
+    if (awayStartAtRef.current !== null) {
+      const now = Date.now();
+      const extra = now - awayStartAtRef.current;
+      usedLeaveMsRef.current = Math.min(LEAVE_BUDGET_MS, usedLeaveMsRef.current + extra);
+    }
+
+    awayStartAtRef.current = null;
     isAwayRef.current = false;
     setIsAway(false);
-    clearLeaveTimer();
+    setLeaveTimeLeft(getRemainingLeaveMs());
   };
 
   // ---------------- Monitoring event management -----------------
@@ -527,6 +496,15 @@ export default function StudentQuizPage() {
       handleReturnToFocus();
     }
 
+    // While away, keep updating remaining time and enforce auto-submit
+    if (isAwayRef.current) {
+      const remaining = getRemainingLeaveMs();
+      setLeaveTimeLeft(remaining);
+      if (remaining <= 0) {
+        handleAutoSubmitAsCheat('away-timeout');
+      }
+    }
+
     requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
   }, []);
 
@@ -559,14 +537,18 @@ export default function StudentQuizPage() {
     localWarningsRef.current++;
     setWarningCount(localWarningsRef.current);
 
-    const remaining = Math.max(0, MAX_WARNINGS - localWarningsRef.current);
+    const remainingWarnings = Math.max(0, MAX_WARNINGS - localWarningsRef.current);
+    const remainingMs = getRemainingLeaveMs();
+
     toast({
       title: `Warning ${localWarningsRef.current} / ${MAX_WARNINGS}`,
       description:
-        remaining > 0
-          ? `Violation detected (${reason}). ${remaining} warning(s) remaining before auto-submit.`
+        remainingWarnings > 0
+          ? `Violation detected (${reason}). ${remainingWarnings} warning(s) remaining before auto-submit. Away time left: ${Math.ceil(
+              remainingMs / 1000,
+            )} second${remainingMs > 1000 ? 's' : ''}.`
           : `Violation detected (${reason}). Limit reached; quiz will be auto-submitted.`,
-      variant: remaining > 0 ? 'default' : 'destructive',
+      variant: remainingWarnings > 0 ? 'default' : 'destructive',
     });
 
     try {
@@ -583,10 +565,18 @@ export default function StudentQuizPage() {
   const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
-    // Already away -> don't stack warnings, just ensure timer runs
+    // Check if budget already exhausted
+    const currentRemaining = getRemainingLeaveMs();
+    if (currentRemaining <= 0) {
+      handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
+      return;
+    }
+
+    // Already away -> don't stack warnings, just keep tracking time
     if (isAwayRef.current) {
-      if (leaveTimeoutRef.current === null && remainingLeaveMsRef.current > 0) {
-        startLeaveTimer(reasonBase, stillAwayCheck);
+      setLeaveTimeLeft(currentRemaining);
+      if (currentRemaining <= 0) {
+        handleAutoSubmitAsCheat(`${reasonBase}:timeout`);
       }
       return;
     }
@@ -594,18 +584,18 @@ export default function StudentQuizPage() {
     // Start new away episode
     isAwayRef.current = true;
     setIsAway(true);
+    awayStartAtRef.current = Date.now();
+    setLeaveTimeLeft(getRemainingLeaveMs());
 
     if (localWarningsRef.current < MAX_WARNINGS) {
       sendFlag(reasonBase);
     }
 
-    if (remainingLeaveMsRef.current <= 0) {
-      handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
+    // If warnings exceeded or budget just used
+    const afterRemaining = getRemainingLeaveMs();
+    if (afterRemaining <= 0) {
+      handleAutoSubmitAsCheat(`${reasonBase}:timeout`);
       return;
-    }
-
-    if (leaveTimeoutRef.current === null) {
-      startLeaveTimer(reasonBase, stillAwayCheck);
     }
 
     if (localWarningsRef.current >= MAX_WARNINGS) {
