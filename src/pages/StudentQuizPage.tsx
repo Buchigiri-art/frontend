@@ -281,8 +281,6 @@ export default function StudentQuizPage() {
 
       applyBodyStyles();
 
-      // Try fullscreen on ALL devices (desktop + mobile).
-      // But we only *enforce* fullscreen as a rule on desktop.
       const ok = await tryEnterFullscreen(3, 300);
       if (ok) {
         didEnterFullscreenRef.current = true;
@@ -291,7 +289,7 @@ export default function StudentQuizPage() {
         toast({
           title: 'Fullscreen not available',
           description:
-            'Your device or browser did not enter fullscreen. Monitoring will still work for tab/app changes and backgrounding.',
+            'Your device or browser did not enter fullscreen. Monitoring will still work for app/tab changes and backgrounding.',
         });
       }
 
@@ -300,7 +298,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen on desktop) gives a warning and uses your 10-second global away budget. After 3 warnings or 10 seconds away total, the quiz auto-submits.',
+          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen, or exiting fullscreen after enabled) gives a warning and uses your 10-second global away budget. After 3 warnings or 10 seconds away total, the quiz auto-submits.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -495,8 +493,7 @@ export default function StudentQuizPage() {
     if (!guard() || !monitoringRef.current) return;
 
     const fullscreenOk =
-      // on mobile we completely ignore fullscreen requirement
-      isMobile || !didEnterFullscreenRef.current || !!document.fullscreenElement;
+      !didEnterFullscreenRef.current || !!document.fullscreenElement;
 
     const lost =
       document.visibilityState !== 'visible' ||
@@ -506,7 +503,7 @@ export default function StudentQuizPage() {
     if (lost) {
       handleFocusLostViolation('poll:focus-visibility', () => {
         const fullscreenOkInner =
-          isMobile || !didEnterFullscreenRef.current || !!document.fullscreenElement;
+          !didEnterFullscreenRef.current || !!document.fullscreenElement;
         return (
           document.visibilityState !== 'visible' ||
           !(document.hasFocus && document.hasFocus()) ||
@@ -565,7 +562,7 @@ export default function StudentQuizPage() {
   };
 
   // ------------------ Unified focus-loss handler ------------------
-  const handleFocusLostViolation = (reasonBase: string, _stillAwayCheck: () => boolean) => {
+  const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
     if (!guard()) return;
 
     // Check global budget
@@ -622,7 +619,14 @@ export default function StudentQuizPage() {
       const hr = window.innerHeight / sh;
 
       if (wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD) {
-        handleFocusLostViolation('window:split-screen-or-resize', () => false);
+        handleFocusLostViolation('window:split-screen-or-resize', () => {
+          const sw2 = window.screen.width || window.innerWidth;
+          const sh2 = window.screen.height || window.innerHeight;
+          if (!sw2 || !sh2) return false;
+          const wr2 = window.innerWidth / sw2;
+          const hr2 = window.innerHeight / sh2;
+          return wr2 < SPLIT_DIM_THRESHOLD || hr2 < SPLIT_DIM_THRESHOLD;
+        });
       }
     } catch (err) {
       console.warn('Error during resize check', err);
@@ -666,9 +670,6 @@ export default function StudentQuizPage() {
 
   const onFullscreenChange = () => {
     if (!guard()) return;
-
-    // On mobile, COMPLETELY ignore fullscreen changes (no violations).
-    if (isMobile) return;
 
     const isFs = !!document.fullscreenElement;
 
@@ -871,8 +872,9 @@ export default function StudentQuizPage() {
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. Any time this quiz loses focus or goes behind another
-                app/tab (including going to background), you get a warning. After 3 warnings,
-                the quiz is blocked and auto-submitted. Leaving the quiz screen uses your{' '}
+                app/tab (including split-screen or going to background), you get a warning.
+                After 3 warnings, the quiz is blocked and auto-submitted. Leaving the quiz
+                screen uses your{' '}
                 <span className="font-semibold">10-second total away budget</span>; once that
                 is exhausted, the quiz is auto-submitted even if warnings are less than 3.
               </p>
@@ -896,8 +898,7 @@ export default function StudentQuizPage() {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
 
-    // Only show fullscreen button on desktop, and only if not already fullscreen
-    const showFullscreenButton = !isMobile && !document.fullscreenElement;
+    const showFullscreenButton = !document.fullscreenElement;
 
     return (
       <div className="min-h-screen bg-background">
@@ -941,7 +942,7 @@ export default function StudentQuizPage() {
                         toast({
                           title: 'Fullscreen not available',
                           description:
-                            'Your browser did not enter fullscreen. Monitoring will still work for tab changes and backgrounding.',
+                            'Your device or browser did not enter fullscreen. Monitoring will still work for app/tab changes and backgrounding.',
                         });
                       }
                     }}
