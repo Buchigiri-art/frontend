@@ -264,11 +264,11 @@ export default function BookmarksPage() {
       className="p-3 md:p-6 max-w-6xl mx-auto"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: 0.2 }}
     >
       {/* HEADER */}
       <div className="space-y-1 md:space-y-2 mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500 bg-clip-text text-transparent">
+        <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-primary">
           Bookmarked Quizzes
         </h1>
         <p className="text-sm md:text-base text-muted-foreground">
@@ -277,7 +277,7 @@ export default function BookmarksPage() {
       </div>
 
       {/* TOP STATS / FILTER BAR */}
-      <Card className="shadow-card border border-primary/10 bg-gradient-to-r from-slate-950/90 via-slate-950/80 to-slate-950/90 text-foreground">
+      <Card className="shadow-card">
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             {/* Total bookmarks stat */}
@@ -285,18 +285,15 @@ export default function BookmarksPage() {
               className="flex items-center gap-4"
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.25 }}
+              transition={{ duration: 0.2 }}
             >
-              <div className="relative">
-                <div className="absolute -inset-2 rounded-2xl bg-primary/20 blur-md" />
-                <div className="relative rounded-2xl bg-slate-900/80 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground/80">
-                    Total Bookmarks
-                  </p>
-                  <p className="mt-1 text-2xl md:text-3xl font-bold text-primary-foreground">
-                    {quizBookmarks.length}
-                  </p>
-                </div>
+              <div className="rounded-2xl bg-muted px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Total Bookmarks
+                </p>
+                <p className="mt-1 text-2xl md:text-3xl font-bold text-primary">
+                  {quizBookmarks.length}
+                </p>
               </div>
             </motion.div>
 
@@ -305,10 +302,10 @@ export default function BookmarksPage() {
               className="flex gap-2 flex-wrap justify-end"
               initial={{ opacity: 0, x: 10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.25, delay: 0.05 }}
+              transition={{ duration: 0.2, delay: 0.05 }}
             >
               <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-[180px] h-9 text-xs md:text-sm bg-slate-900/80 border-slate-700 text-foreground">
+                <SelectTrigger className="w-[180px] h-9 text-xs md:text-sm">
                   <SelectValue placeholder="Filter by difficulty" />
                 </SelectTrigger>
                 <SelectContent>
@@ -325,11 +322,7 @@ export default function BookmarksPage() {
                 onOpenChange={setNewFolderDialogOpen}
               >
                 <DialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-primary/40 bg-slate-900/80 hover:bg-primary/10"
-                  >
+                  <Button variant="outline" size="sm">
                     <FolderPlus className="h-4 w-4 mr-2" />
                     New Folder
                   </Button>
@@ -372,7 +365,7 @@ export default function BookmarksPage() {
               <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.25 }}
+                transition={{ duration: 0.2 }}
               >
                 <Bookmark className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground mx-auto opacity-60" />
               </motion.div>
@@ -408,13 +401,13 @@ export default function BookmarksPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -6 }}
                     transition={{
-                      duration: 0.22,
+                      duration: 0.18,
                       delay: index * 0.03,
                     }}
                   >
                     <AccordionItem
                       value={folderId}
-                      className="border rounded-xl bg-background/70 backdrop-blur"
+                      className="border rounded-xl bg-background"
                     >
                       <AccordionTrigger className="px-4 hover:no-underline">
                         <div className="flex items-center gap-2">
@@ -436,11 +429,11 @@ export default function BookmarksPage() {
                                 initial={{ opacity: 0, y: 12 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{
-                                  duration: 0.22,
+                                  duration: 0.18,
                                   delay: i * 0.03,
                                 }}
                               >
-                                <Card className="shadow-card border border-slate-200/70 hover:border-primary/40 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5">
+                                <Card className="shadow-card hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5">
                                   <CardHeader>
                                     <div className="flex items-start justify-between gap-3">
                                       <div className="space-y-1 flex-1">
@@ -473,7 +466,6 @@ export default function BookmarksPage() {
                                         <Button
                                           size="sm"
                                           variant="outline"
-                                          className="hover:bg-primary/10"
                                           onClick={() =>
                                             openShareDialog(bookmark)
                                           }
@@ -483,7 +475,6 @@ export default function BookmarksPage() {
                                         <Button
                                           size="sm"
                                           variant="outline"
-                                          className="hover:bg-primary/10"
                                           onClick={() =>
                                             handleEditInQuiz(bookmark)
                                           }
@@ -519,7 +510,7 @@ export default function BookmarksPage() {
                                               (q: any, idx: number) => (
                                                 <Card
                                                   key={q.id || idx}
-                                                  className="p-3 border-slate-200/80"
+                                                  className="p-3"
                                                 >
                                                   <div className="space-y-2">
                                                     <div className="flex items-start justify-between gap-2">
