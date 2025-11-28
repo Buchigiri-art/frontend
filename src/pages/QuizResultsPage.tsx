@@ -32,6 +32,7 @@ import {
   XCircle,
   ChevronLeft,
   ChevronRight,
+  Search,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
 import {
@@ -393,8 +394,8 @@ export default function QuizResultsPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="space-y-6">
+    <div className="p-6 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="space-y-1">
@@ -424,11 +425,11 @@ export default function QuizResultsPage() {
           <div className="flex flex-col gap-2 items-end">
             <div className="flex flex-wrap gap-2 justify-end">
               {/* View mode toggle */}
-              <div className="flex rounded-md border bg-muted/60 p-1">
+              <div className="flex rounded-full border bg-muted/60 p-1">
                 <Button
                   size="sm"
                   variant={viewMode === 'results' ? 'default' : 'ghost'}
-                  className="rounded-md"
+                  className="rounded-full px-4"
                   onClick={() => setViewMode('results')}
                 >
                   Results
@@ -436,7 +437,7 @@ export default function QuizResultsPage() {
                 <Button
                   size="sm"
                   variant={viewMode === 'leaderboard' ? 'default' : 'ghost'}
-                  className="rounded-md"
+                  className="rounded-full px-4"
                   onClick={() => setViewMode('leaderboard')}
                 >
                   Leaderboard
@@ -447,6 +448,7 @@ export default function QuizResultsPage() {
                 onClick={() => setAutoRefresh((v) => !v)}
                 variant={autoRefresh ? 'default' : 'outline'}
                 size="sm"
+                className="rounded-full"
               >
                 <RefreshCw
                   className={`h-4 w-4 mr-2 ${
@@ -461,6 +463,7 @@ export default function QuizResultsPage() {
               <Button
                 onClick={() => handleDownloadExcel(false)}
                 disabled={downloading || attempts.length === 0}
+                className="rounded-full"
               >
                 {downloading ? (
                   <>
@@ -478,6 +481,7 @@ export default function QuizResultsPage() {
                 onClick={() => handleDownloadExcel(true)}
                 disabled={downloading || attempts.length === 0}
                 variant="outline"
+                className="rounded-full"
               >
                 <Download className="mr-2 h-4 w-4" />
                 Detailed Report
@@ -562,52 +566,65 @@ export default function QuizResultsPage() {
             </CardHeader>
 
             <CardContent>
-              {/* SEARCH + SORT BAR (this should now be clearly visible above the table) */}
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="w-full md:w-80">
-                  <input
-                    type="text"
-                    placeholder="Search by name, USN, branch..."
-                    value={searchTerm}
-                    onChange={(e) => {
-                      setSearchTerm(e.target.value);
-                      setPage(1);
-                    }}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  />
+              {/* Search + Sort bar */}
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-muted/60 px-4 py-3">
+                {/* Search */}
+                <div className="w-full sm:max-w-xs">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Search
+                  </label>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type="text"
+                      placeholder="Search by name, USN, branch..."
+                      value={searchTerm}
+                      onChange={(e) => {
+                        setSearchTerm(e.target.value);
+                        setPage(1);
+                      }}
+                      className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs md:text-sm">
-                  <span className="text-muted-foreground">Sort by</span>
-                  <select
-                    value={sortKey}
-                    onChange={(e) =>
-                      setSortKey(e.target.value as SortKey)
-                    }
-                    className="h-9 rounded-md border border-input bg-background px-2 py-1 text-xs md:text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  >
-                    <option value="usn">USN</option>
-                    <option value="name">Name</option>
-                    <option value="percentage">Percentage</option>
-                  </select>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="h-9 w-9"
-                    onClick={() =>
-                      setSortOrder((prev) =>
-                        prev === 'asc' ? 'desc' : 'asc'
-                      )
-                    }
-                    title={
-                      sortOrder === 'asc'
-                        ? 'Ascending'
-                        : 'Descending'
-                    }
-                  >
-                    <span className="text-xs font-semibold">
-                      {sortOrder === 'asc' ? '↑' : '↓'}
+
+                {/* Sort */}
+                <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto">
+                  <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5">
+                    <span className="text-xs text-muted-foreground">
+                      Sort by
                     </span>
-                  </Button>
+                    <select
+                      value={sortKey}
+                      onChange={(e) =>
+                        setSortKey(e.target.value as SortKey)
+                      }
+                      className="bg-transparent text-sm outline-none border-none focus:ring-0"
+                    >
+                      <option value="usn">USN</option>
+                      <option value="name">Name</option>
+                      <option value="percentage">Percentage</option>
+                    </select>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() =>
+                        setSortOrder((prev) =>
+                          prev === 'asc' ? 'desc' : 'asc'
+                        )
+                      }
+                      title={
+                        sortOrder === 'asc'
+                          ? 'Ascending'
+                          : 'Descending'
+                      }
+                    >
+                      <span className="text-xs font-semibold">
+                        {sortOrder === 'asc' ? '↑' : '↓'}
+                      </span>
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -623,7 +640,7 @@ export default function QuizResultsPage() {
                 </div>
               ) : (
                 <>
-                  <div className="rounded-md border overflow-x-auto">
+                  <div className="rounded-xl border overflow-x-auto bg-background">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -834,7 +851,7 @@ export default function QuizResultsPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="rounded-md border overflow-x-auto">
+                  <div className="rounded-xl border overflow-x-auto bg-background">
                     <Table>
                       <TableHeader>
                         <TableRow>
