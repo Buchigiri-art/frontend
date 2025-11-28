@@ -42,6 +42,7 @@ import {
   DialogTitle as DialogTitleUI,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface QuizAttempt {
   _id: string;
@@ -124,8 +125,12 @@ export default function QuizResultsPage() {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(null);
-  const [attemptDetail, setAttemptDetail] = useState<AttemptDetail | null>(null);
+  const [selectedAttempt, setSelectedAttempt] = useState<QuizAttempt | null>(
+    null
+  );
+  const [attemptDetail, setAttemptDetail] = useState<AttemptDetail | null>(
+    null
+  );
 
   const [page, setPage] = useState(1);
 
@@ -180,62 +185,59 @@ export default function QuizResultsPage() {
 
   const stats = calculateStats();
 
-  const fetchResults = useCallback(
-    async () => {
-      if (!quizId) {
-        setLoading(false);
-        toast({
-          title: 'Error',
-          description: 'Missing quiz id in URL',
-          variant: 'destructive',
-        });
-        return;
+  const fetchResults = useCallback(async () => {
+    if (!quizId) {
+      setLoading(false);
+      toast({
+        title: 'Error',
+        description: 'Missing quiz id in URL',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const data = await quizAPI.getResults(quizId);
+      if (!data || !data.quiz) {
+        throw new Error('Invalid response from server');
       }
 
-      try {
-        const data = await quizAPI.getResults(quizId);
-        if (!data || !data.quiz) {
-          throw new Error('Invalid response from server');
-        }
+      setQuizTitle(data.quiz.title || 'Quiz');
+      const newAttempts: QuizAttempt[] = Array.isArray(data.attempts)
+        ? data.attempts
+        : [];
 
-        setQuizTitle(data.quiz.title || 'Quiz');
-        const newAttempts: QuizAttempt[] = Array.isArray(data.attempts)
-          ? data.attempts
-          : [];
+      setAttempts(newAttempts);
 
-        setAttempts(newAttempts);
+      setPage((prevPage) => {
+        const newTotalPages = Math.max(
+          1,
+          Math.ceil(newAttempts.length / PAGE_SIZE)
+        );
 
-        setPage((prevPage) => {
-          const newTotalPages = Math.max(
-            1,
-            Math.ceil(newAttempts.length / PAGE_SIZE)
-          );
-
-          // On very first successful load, go to page 1
-          if (isInitialLoadRef.current) {
-            return 1;
-          }
-
-          // On subsequent auto-refreshes, keep current page if possible
-          return Math.min(prevPage, newTotalPages);
-        });
-
+        // On very first successful load, go to page 1
         if (isInitialLoadRef.current) {
-          isInitialLoadRef.current = false;
+          return 1;
         }
-      } catch (error: any) {
-        console.error('Error fetching results:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load quiz results',
-          variant: 'destructive',
-        });
-      } finally {
-        setLoading(false);
+
+        // On subsequent auto-refreshes, keep current page if possible
+        return Math.min(prevPage, newTotalPages);
+      });
+
+      if (isInitialLoadRef.current) {
+        isInitialLoadRef.current = false;
       }
-    },
-    [quizId]
-  );
+    } catch (error: any) {
+      console.error('Error fetching results:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load quiz results',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [quizId]);
 
   useEffect(() => {
     fetchResults();
@@ -533,7 +535,7 @@ export default function QuizResultsPage() {
           </div>
         )}
 
-        {/* Main Card: Results / Leaderboard toggle INSIDE header, right side */}
+        {/* Main Card: animated Results / Leaderboard toggle INSIDE header */}
         <Card>
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -549,366 +551,165 @@ export default function QuizResultsPage() {
               </CardDescription>
             </div>
 
-            {/* Results / Leaderboard toggle aligned to the right inside this card */}
-            <div className="flex rounded-full border bg-muted/60 p-1">
-              <Button
-                size="sm"
-                variant={viewMode === 'results' ? 'default' : 'ghost'}
-                className="rounded-full px-4"
-                onClick={() => setViewMode('results')}
-              >
-                Results
-              </Button>
-              <Button
-                size="sm"
-                variant={viewMode === 'leaderboard' ? 'default' : 'ghost'}
-                className="rounded-full px-4"
-                onClick={() => setViewMode('leaderboard')}
-              >
-                Leaderboard
-              </Button>
+            {/* Futuristic animated toggle */}
+            <div
+              className={`relative flex items-center rounded-full border bg-background/60 px-1 py-1 shadow-sm ${
+                viewMode === 'leaderboard'
+                  ? 'shadow-[0_0_25px_rgba(59,130,246,0.45)]'
+                  : ''
+              }`}
+            >
+              {(['results', 'leaderboard'] as ViewMode[]).map((mode) => {
+                const isActive = viewMode === mode;
+                const label =
+                  mode === 'results' ? 'Results' : 'Leaderboard';
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setViewMode(mode)}
+                    className="relative flex-1 px-4 py-1.5 text-xs sm:text-sm font-medium rounded-full"
+                  >
+                    {isActive && (
+                      <motion.div
+                        layoutId="viewTogglePill"
+                        className="absolute inset-0 rounded-full bg-primary"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 400,
+                          damping: 30,
+                        }}
+                      />
+                    )}
+                    <span
+                      className={`relative z-10 ${
+                        isActive
+                          ? 'text-primary-foreground'
+                          : 'text-muted-foreground'
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </CardHeader>
 
           <CardContent>
-            {viewMode === 'results' ? (
-              <>
-                {/* Search + Sort bar */}
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-muted/60 px-4 py-3">
-                  {/* Search */}
-                  <div className="w-full sm:max-w-xs">
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                      Search
-                    </label>
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        type="text"
-                        placeholder="Search by name, USN, branch..."
-                        value={searchTerm}
-                        onChange={(e) => {
-                          setSearchTerm(e.target.value);
-                          setPage(1);
-                        }}
-                        className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Sort */}
-                  <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto">
-                    <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5">
-                      <span className="text-xs text-muted-foreground">
-                        Sort by
-                      </span>
-                      <select
-                        value={sortKey}
-                        onChange={(e) =>
-                          setSortKey(e.target.value as SortKey)
-                        }
-                        className="bg-transparent text-sm outline-none border-none focus:ring-0"
-                      >
-                        <option value="usn">USN</option>
-                        <option value="name">Name</option>
-                        <option value="percentage">Percentage</option>
-                      </select>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() =>
-                          setSortOrder((prev) =>
-                            prev === 'asc' ? 'desc' : 'asc'
-                          )
-                        }
-                        title={
-                          sortOrder === 'asc'
-                            ? 'Ascending'
-                            : 'Descending'
-                        }
-                      >
-                        <span className="text-xs font-semibold">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {attempts.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">
-                      No Results Yet
-                    </h3>
-                    <p className="text-muted-foreground">
-                      Students haven't attempted this quiz yet.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="rounded-xl border overflow-x-auto bg-background">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Student Name</TableHead>
-                            <TableHead>USN</TableHead>
-                            <TableHead>Branch</TableHead>
-                            <TableHead>Year/Sem</TableHead>
-                            <TableHead>Score</TableHead>
-                            <TableHead>Percentage</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Submitted At</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {paginatedAttempts.map((attempt) => (
-                            <TableRow
-                              key={attempt._id}
-                              className="cursor-pointer hover:bg-muted/50"
-                              onClick={() => openAttemptDetail(attempt)}
-                            >
-                              <TableCell className="font-medium">
-                                {attempt.studentName}
-                              </TableCell>
-                              <TableCell>{attempt.studentUSN}</TableCell>
-                              <TableCell>{attempt.studentBranch}</TableCell>
-                              <TableCell>
-                                {attempt.studentYear}/{attempt.studentSemester}
-                              </TableCell>
-                              <TableCell>
-                                {attempt.totalMarks}/{attempt.maxMarks}
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className={
-                                    (attempt.percentage || 0) >= 40
-                                      ? 'text-green-600 font-semibold'
-                                      : 'text-red-600 font-semibold'
-                                  }
-                                >
-                                  {Number.isFinite(attempt.percentage)
-                                    ? attempt.percentage.toFixed(1)
-                                    : '0.0'}
-                                  %
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={
-                                    attempt.status === 'graded'
-                                      ? 'default'
-                                      : 'secondary'
-                                  }
-                                >
-                                  {attempt.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                {attempt.submittedAt
-                                  ? new Date(
-                                      attempt.submittedAt
-                                    ).toLocaleString()
-                                  : '-'}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-
-                    {/* Pagination controls */}
-                    {filteredAttempts.length > 0 && totalPages > 1 && (
-                      <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground flex-wrap gap-2">
-                        <div>
-                          Showing{' '}
-                          <span className="font-semibold">
-                            {(safePage - 1) * PAGE_SIZE + 1}
-                          </span>{' '}
-                          –{' '}
-                          <span className="font-semibold">
-                            {Math.min(
-                              safePage * PAGE_SIZE,
-                              filteredAttempts.length
-                            )}
-                          </span>{' '}
-                          of{' '}
-                          <span className="font-semibold">
-                            {filteredAttempts.length}
-                          </span>{' '}
-                          students
-                          {searchTerm && (
-                            <span className="ml-1 text-xs">
-                              (filtered from {attempts.length} total)
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            disabled={safePage === 1}
-                            onClick={() =>
-                              setPage((p) => Math.max(1, p - 1))
-                            }
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </Button>
-                          <span>
-                            Page{' '}
-                            <span className="font-semibold">
-                              {safePage}
-                            </span>{' '}
-                            of{' '}
-                            <span className="font-semibold">
-                              {totalPages}
-                            </span>
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            disabled={safePage === totalPages}
-                            onClick={() =>
-                              setPage((p) =>
-                                Math.min(totalPages, p + 1)
-                              )
-                            }
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
-                        </div>
+            <AnimatePresence mode="wait">
+              {viewMode === 'results' ? (
+                <motion.div
+                  key="results-view"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  {/* Search + Sort bar */}
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-muted/60 px-4 py-3">
+                    {/* Search */}
+                    <div className="w-full sm:max-w-xs">
+                      <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                        Search
+                      </label>
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search by name, USN, branch..."
+                          value={searchTerm}
+                          onChange={(e) => {
+                            setSearchTerm(e.target.value);
+                            setPage(1);
+                          }}
+                          className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        />
                       </div>
-                    )}
-                  </>
-                )}
-              </>
-            ) : (
-              // ---------------- LEADERBOARD VIEW ----------------
-              <>
-                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-xl bg-muted/60 px-4 py-3">
-                  <p className="text-sm text-muted-foreground">
-                    Showing top performers based on percentage and total marks.
-                  </p>
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">
-                        Show Top
-                      </span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={attempts.length || 1}
-                        value={leaderboardCount || ''}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10);
-                          if (Number.isNaN(val)) {
-                            setLeaderboardCount(0);
-                          } else {
-                            setLeaderboardCount(
-                              Math.max(
-                                1,
-                                Math.min(val, attempts.length || 1)
-                              )
-                            );
+                    </div>
+
+                    {/* Sort */}
+                    <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto">
+                      <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5">
+                        <span className="text-xs text-muted-foreground">
+                          Sort by
+                        </span>
+                        <select
+                          value={sortKey}
+                          onChange={(e) =>
+                            setSortKey(e.target.value as SortKey)
                           }
-                        }}
-                        className="h-9 w-16 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      />
-                      <span className="text-muted-foreground">
-                        students
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setLeaderboardCount(5)}
-                      >
-                        Top 5
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setLeaderboardCount(10)}
-                      >
-                        Top 10
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setLeaderboardCount(20)}
-                        disabled={attempts.length < 20}
-                      >
-                        Top 20
-                      </Button>
+                          className="bg-transparent text-sm outline-none border-none focus:ring-0"
+                        >
+                          <option value="usn">USN</option>
+                          <option value="name">Name</option>
+                          <option value="percentage">Percentage</option>
+                        </select>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() =>
+                            setSortOrder((prev) =>
+                              prev === 'asc' ? 'desc' : 'asc'
+                            )
+                          }
+                          title={
+                            sortOrder === 'asc'
+                              ? 'Ascending'
+                              : 'Descending'
+                          }
+                        >
+                          <span className="text-xs font-semibold">
+                            {sortOrder === 'asc' ? '↑' : '↓'}
+                          </span>
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {attempts.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">
-                      No Results Yet
-                    </h3>
-                    <p className="text-muted-foreground">
-                      Leaderboard will be available once students attempt
-                      this quiz.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="rounded-xl border overflow-x-auto bg-background">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Rank</TableHead>
-                            <TableHead>Student Name</TableHead>
-                            <TableHead>USN</TableHead>
-                            <TableHead>Branch</TableHead>
-                            <TableHead>Score</TableHead>
-                            <TableHead>Percentage</TableHead>
-                            <TableHead>Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {leaderboardAttempts.map((attempt, index) => {
-                            const rank = index + 1;
-                            const isTop1 = rank === 1;
-                            const isTop3 = rank <= 3;
-
-                            return (
+                  {attempts.length === 0 ? (
+                    <div className="text-center py-12">
+                      <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">
+                        No Results Yet
+                      </h3>
+                      <p className="text-muted-foreground">
+                        Students haven't attempted this quiz yet.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-xl border overflow-x-auto bg-background">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Student Name</TableHead>
+                              <TableHead>USN</TableHead>
+                              <TableHead>Branch</TableHead>
+                              <TableHead>Year/Sem</TableHead>
+                              <TableHead>Score</TableHead>
+                              <TableHead>Percentage</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Submitted At</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paginatedAttempts.map((attempt) => (
                               <TableRow
                                 key={attempt._id}
-                                className={`cursor-pointer hover:bg-muted/60 ${
-                                  isTop1
-                                    ? 'bg-yellow-50/80'
-                                    : isTop3
-                                    ? 'bg-emerald-50/50'
-                                    : ''
-                                }`}
+                                className="cursor-pointer hover:bg-muted/50 transition-colors"
                                 onClick={() => openAttemptDetail(attempt)}
                               >
-                                <TableCell className="font-semibold">
-                                  <div className="flex items-center gap-2">
-                                    <span>{rank}</span>
-                                    {isTop1 && (
-                                      <span className="inline-flex items-center rounded-full bg-yellow-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
-                                        Top 1
-                                      </span>
-                                    )}
-                                    {!isTop1 && isTop3 && (
-                                      <span className="inline-flex items-center rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
-                                        Top {rank}
-                                      </span>
-                                    )}
-                                  </div>
-                                </TableCell>
                                 <TableCell className="font-medium">
                                   {attempt.studentName}
                                 </TableCell>
                                 <TableCell>{attempt.studentUSN}</TableCell>
                                 <TableCell>{attempt.studentBranch}</TableCell>
+                                <TableCell>
+                                  {attempt.studentYear}/
+                                  {attempt.studentSemester}
+                                </TableCell>
                                 <TableCell>
                                   {attempt.totalMarks}/{attempt.maxMarks}
                                 </TableCell>
@@ -920,7 +721,9 @@ export default function QuizResultsPage() {
                                         : 'text-red-600 font-semibold'
                                     }
                                   >
-                                    {Number.isFinite(attempt.percentage)
+                                    {Number.isFinite(
+                                      attempt.percentage
+                                    )
                                       ? attempt.percentage.toFixed(1)
                                       : '0.0'}
                                     %
@@ -937,20 +740,278 @@ export default function QuizResultsPage() {
                                     {attempt.status}
                                   </Badge>
                                 </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {attempt.submittedAt
+                                    ? new Date(
+                                        attempt.submittedAt
+                                      ).toLocaleString()
+                                    : '-'}
+                                </TableCell>
                               </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Leaderboard is sorted by percentage (highest first), then
-                      by total marks, then by name.
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Pagination controls */}
+                      {filteredAttempts.length > 0 &&
+                        totalPages > 1 && (
+                          <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground flex-wrap gap-2">
+                            <div>
+                              Showing{' '}
+                              <span className="font-semibold">
+                                {(safePage - 1) * PAGE_SIZE + 1}
+                              </span>{' '}
+                              –{' '}
+                              <span className="font-semibold">
+                                {Math.min(
+                                  safePage * PAGE_SIZE,
+                                  filteredAttempts.length
+                                )}
+                              </span>{' '}
+                              of{' '}
+                              <span className="font-semibold">
+                                {filteredAttempts.length}
+                              </span>{' '}
+                              students
+                              {searchTerm && (
+                                <span className="ml-1 text-xs">
+                                  (filtered from {attempts.length} total)
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                disabled={safePage === 1}
+                                onClick={() =>
+                                  setPage((p) => Math.max(1, p - 1))
+                                }
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                              </Button>
+                              <span>
+                                Page{' '}
+                                <span className="font-semibold">
+                                  {safePage}
+                                </span>{' '}
+                                of{' '}
+                                <span className="font-semibold">
+                                  {totalPages}
+                                </span>
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                disabled={safePage === totalPages}
+                                onClick={() =>
+                                  setPage((p) =>
+                                    Math.min(totalPages, p + 1)
+                                  )
+                                }
+                              >
+                                <ChevronRight className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                    </>
+                  )}
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="leaderboard-view"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-xl bg-muted/60 px-4 py-3">
+                    <p className="text-sm text-muted-foreground">
+                      Showing top performers based on percentage and total
+                      marks.
                     </p>
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">
+                          Show Top
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={attempts.length || 1}
+                          value={leaderboardCount || ''}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            if (Number.isNaN(val)) {
+                              setLeaderboardCount(0);
+                            } else {
+                              setLeaderboardCount(
+                                Math.max(
+                                  1,
+                                  Math.min(
+                                    val,
+                                    attempts.length || 1
+                                  )
+                                )
+                              );
+                            }
+                          }}
+                          className="h-9 w-16 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        />
+                        <span className="text-muted-foreground">
+                          students
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setLeaderboardCount(5)}
+                        >
+                          Top 5
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setLeaderboardCount(10)}
+                        >
+                          Top 10
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setLeaderboardCount(20)}
+                          disabled={attempts.length < 20}
+                        >
+                          Top 20
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </>
-            )}
+
+                  {attempts.length === 0 ? (
+                    <div className="text-center py-12">
+                      <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">
+                        No Results Yet
+                      </h3>
+                      <p className="text-muted-foreground">
+                        Leaderboard will be available once students
+                        attempt this quiz.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="rounded-xl border overflow-x-auto bg-background">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Rank</TableHead>
+                              <TableHead>Student Name</TableHead>
+                              <TableHead>USN</TableHead>
+                              <TableHead>Branch</TableHead>
+                              <TableHead>Score</TableHead>
+                              <TableHead>Percentage</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {leaderboardAttempts.map(
+                              (attempt, index) => {
+                                const rank = index + 1;
+                                const isTop1 = rank === 1;
+                                const isTop3 = rank <= 3;
+
+                                return (
+                                  <TableRow
+                                    key={attempt._id}
+                                    className={`cursor-pointer hover:bg-muted/60 transition-colors ${
+                                      isTop1
+                                        ? 'bg-yellow-50/80'
+                                        : isTop3
+                                        ? 'bg-emerald-50/50'
+                                        : ''
+                                    }`}
+                                    onClick={() =>
+                                      openAttemptDetail(attempt)
+                                    }
+                                  >
+                                    <TableCell className="font-semibold">
+                                      <div className="flex items-center gap-2">
+                                        <span>{rank}</span>
+                                        {isTop1 && (
+                                          <span className="inline-flex items-center rounded-full bg-yellow-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
+                                            Top 1
+                                          </span>
+                                        )}
+                                        {!isTop1 && isTop3 && (
+                                          <span className="inline-flex items-center rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
+                                            Top {rank}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="font-medium">
+                                      {attempt.studentName}
+                                    </TableCell>
+                                    <TableCell>
+                                      {attempt.studentUSN}
+                                    </TableCell>
+                                    <TableCell>
+                                      {attempt.studentBranch}
+                                    </TableCell>
+                                    <TableCell>
+                                      {attempt.totalMarks}/
+                                      {attempt.maxMarks}
+                                    </TableCell>
+                                    <TableCell>
+                                      <span
+                                        className={
+                                          (attempt.percentage || 0) >=
+                                          40
+                                            ? 'text-green-600 font-semibold'
+                                            : 'text-red-600 font-semibold'
+                                        }
+                                      >
+                                        {Number.isFinite(
+                                          attempt.percentage
+                                        )
+                                          ? attempt.percentage.toFixed(
+                                              1
+                                            )
+                                          : '0.0'}
+                                        %
+                                      </span>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge
+                                        variant={
+                                          attempt.status === 'graded'
+                                            ? 'default'
+                                            : 'secondary'
+                                        }
+                                      >
+                                        {attempt.status}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              }
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Leaderboard is sorted by percentage (highest
+                        first), then by total marks, then by name.
+                      </p>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </CardContent>
         </Card>
       </div>
@@ -1038,14 +1099,18 @@ export default function QuizResultsPage() {
 
                   const selectedLabel =
                     selectedIdx >= 0
-                      ? `${optionLabel(selectedIdx)}. ${options[selectedIdx]}`
+                      ? `${optionLabel(selectedIdx)}. ${
+                          options[selectedIdx]
+                        }`
                       : q.studentAnswer
                       ? q.studentAnswer
                       : 'No answer';
 
                   const correctLabel =
                     correctIdx >= 0
-                      ? `${optionLabel(correctIdx)}. ${options[correctIdx]}`
+                      ? `${optionLabel(correctIdx)}. ${
+                          options[correctIdx]
+                        }`
                       : q.correctAnswer || '-';
 
                   return (
