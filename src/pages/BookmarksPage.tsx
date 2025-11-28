@@ -55,6 +55,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { AnimatePresence, motion } from 'framer-motion';
 
 export default function BookmarksPage() {
   const navigate = useNavigate();
@@ -68,7 +69,8 @@ export default function BookmarksPage() {
   const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
 
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [selectedQuizForShare, setSelectedQuizForShare] = useState<any>(null);
+  const [selectedQuizForShare, setSelectedQuizForShare] =
+    useState<any>(null);
 
   // student selection
   const [students, setStudents] = useState<any[]>([]);
@@ -82,11 +84,12 @@ export default function BookmarksPage() {
 
   const fetchData = async () => {
     try {
-      const [bookmarksData, foldersData, studentsData] = await Promise.all([
-        bookmarksAPI.getAll(),
-        foldersAPI.getAll(),
-        studentsAPI.getAll(),
-      ]);
+      const [bookmarksData, foldersData, studentsData] =
+        await Promise.all([
+          bookmarksAPI.getAll(),
+          foldersAPI.getAll(),
+          studentsAPI.getAll(),
+        ]);
 
       setBookmarks(bookmarksData || []);
       setFolders(foldersData || []);
@@ -171,7 +174,9 @@ export default function BookmarksPage() {
         links: [],
       });
 
-      toast.success(`Quiz shared with ${result.links?.length || 0} student(s)`);
+      toast.success(
+        `Quiz shared with ${result.links?.length || 0} student(s)`
+      );
       setShareDialogOpen(false);
       setSelectedQuizForShare(null);
       setSelectedStudents([]);
@@ -193,7 +198,7 @@ export default function BookmarksPage() {
     setSelectedStudents((prev) =>
       prev.includes(studentId)
         ? prev.filter((id) => id !== studentId)
-        : [...prev, studentId],
+        : [...prev, studentId]
     );
   };
 
@@ -208,15 +213,17 @@ export default function BookmarksPage() {
   // keep header checkbox indeterminate when some but not all selected
   useEffect(() => {
     if (!headerCheckboxRef.current) return;
-    const all = students.length > 0 && selectedStudents.length === students.length;
+    const all =
+      students.length > 0 &&
+      selectedStudents.length === students.length;
     const none = selectedStudents.length === 0;
     headerCheckboxRef.current.indeterminate = !all && !none;
   }, [selectedStudents, students.length]);
 
   if (loading) {
     return (
-      <div className="p-3 md:p-6 space-y-4 md:space-y-6 animate-fade-in max-w-6xl mx-auto">
-        <div className="text-center py-12">
+      <div className="p-3 md:p-6 max-w-6xl mx-auto">
+        <div className="text-center py-16">
           <p className="text-muted-foreground">Loading bookmarks...</p>
         </div>
       </div>
@@ -230,12 +237,16 @@ export default function BookmarksPage() {
   });
 
   // group by folder
-  const bookmarksByFolder = filteredBookmarks.reduce((acc: any, bookmark: any) => {
-    const folderId = bookmark.folderId?._id || bookmark.folderId || 'no-folder';
-    if (!acc[folderId]) acc[folderId] = [];
-    acc[folderId].push(bookmark);
-    return acc;
-  }, {});
+  const bookmarksByFolder = filteredBookmarks.reduce(
+    (acc: any, bookmark: any) => {
+      const folderId =
+        bookmark.folderId?._id || bookmark.folderId || 'no-folder';
+      if (!acc[folderId]) acc[folderId] = [];
+      acc[folderId].push(bookmark);
+      return acc;
+    },
+    {}
+  );
 
   // filter students by search (name/email/usn)
   const filteredStudents = students.filter((s) => {
@@ -249,9 +260,15 @@ export default function BookmarksPage() {
   });
 
   return (
-    <div className="p-3 md:p-6 space-y-4 md:space-y-6 animate-fade-in max-w-6xl mx-auto">
-      <div className="space-y-1 md:space-y-2">
-        <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+    <motion.div
+      className="p-3 md:p-6 max-w-6xl mx-auto"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+    >
+      {/* HEADER */}
+      <div className="space-y-1 md:space-y-2 mb-4 md:mb-6">
+        <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500 bg-clip-text text-transparent">
           Bookmarked Quizzes
         </h1>
         <p className="text-sm md:text-base text-muted-foreground">
@@ -259,20 +276,39 @@ export default function BookmarksPage() {
         </p>
       </div>
 
-      <Card className="shadow-card">
+      {/* TOP STATS / FILTER BAR */}
+      <Card className="shadow-card border border-primary/10 bg-gradient-to-r from-slate-950/90 via-slate-950/80 to-slate-950/90 text-foreground">
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="text-center">
-                <p className="text-2xl md:text-3xl font-bold text-primary">
-                  {quizBookmarks.length}
-                </p>
-                <p className="text-xs text-muted-foreground">Total Bookmarks</p>
+            {/* Total bookmarks stat */}
+            <motion.div
+              className="flex items-center gap-4"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <div className="relative">
+                <div className="absolute -inset-2 rounded-2xl bg-primary/20 blur-md" />
+                <div className="relative rounded-2xl bg-slate-900/80 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground/80">
+                    Total Bookmarks
+                  </p>
+                  <p className="mt-1 text-2xl md:text-3xl font-bold text-primary-foreground">
+                    {quizBookmarks.length}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex gap-2">
+            </motion.div>
+
+            {/* Filters & New folder */}
+            <motion.div
+              className="flex gap-2 flex-wrap justify-end"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, delay: 0.05 }}
+            >
               <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-[180px] h-9 text-xs md:text-sm">
+                <SelectTrigger className="w-[180px] h-9 text-xs md:text-sm bg-slate-900/80 border-slate-700 text-foreground">
                   <SelectValue placeholder="Filter by difficulty" />
                 </SelectTrigger>
                 <SelectContent>
@@ -284,9 +320,16 @@ export default function BookmarksPage() {
                 </SelectContent>
               </Select>
 
-              <Dialog open={newFolderDialogOpen} onOpenChange={setNewFolderDialogOpen}>
+              <Dialog
+                open={newFolderDialogOpen}
+                onOpenChange={setNewFolderDialogOpen}
+              >
                 <DialogTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-primary/40 bg-slate-900/80 hover:bg-primary/10"
+                  >
                     <FolderPlus className="h-4 w-4 mr-2" />
                     New Folder
                   </Button>
@@ -304,7 +347,9 @@ export default function BookmarksPage() {
                       <Input
                         id="folder-name"
                         value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
+                        onChange={(e) =>
+                          setNewFolderName(e.target.value)
+                        }
                         placeholder="e.g., Mathematics, Science"
                       />
                     </div>
@@ -314,16 +359,23 @@ export default function BookmarksPage() {
                   </div>
                 </DialogContent>
               </Dialog>
-            </div>
+            </motion.div>
           </div>
         </CardContent>
       </Card>
 
+      {/* NO BOOKMARKS */}
       {filteredBookmarks.length === 0 ? (
-        <Card className="shadow-card">
+        <Card className="shadow-card mt-4 md:mt-6">
           <CardContent className="py-16">
             <div className="text-center space-y-3">
-              <Bookmark className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground mx-auto opacity-50" />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.25 }}
+              >
+                <Bookmark className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground mx-auto opacity-60" />
+              </motion.div>
               <div>
                 <p className="text-base md:text-lg font-medium text-foreground">
                   No bookmarked quizzes found
@@ -332,138 +384,211 @@ export default function BookmarksPage() {
                   Create and bookmark quizzes to see them here
                 </p>
               </div>
-              <Button onClick={() => navigate('/create-quiz')} className="mt-4">
+              <Button
+                onClick={() => navigate('/create-quiz')}
+                className="mt-4"
+              >
                 Go to Create Quiz
               </Button>
             </div>
           </CardContent>
         </Card>
       ) : (
-        <Accordion type="multiple" className="space-y-4">
-          {Object.entries(bookmarksByFolder).map(
-            ([folderId, folderBookmarks]: [string, any]) => {
-              const folder = folders.find((f) => f._id === folderId);
-              const folderName = folder?.name || 'Uncategorized';
+        <Accordion type="multiple" className="space-y-4 mt-4 md:mt-6">
+          <AnimatePresence initial={false}>
+            {Object.entries(bookmarksByFolder).map(
+              ([folderId, folderBookmarks]: [string, any], index) => {
+                const folder = folders.find((f) => f._id === folderId);
+                const folderName = folder?.name || 'Uncategorized';
 
-              return (
-                <AccordionItem key={folderId} value={folderId} className="border rounded-lg">
-                  <AccordionTrigger className="px-4 hover:no-underline">
-                    <div className="flex items-center gap-2">
-                      <Folder className="h-5 w-5 text-primary" />
-                      <span className="font-semibold">{folderName}</span>
-                      <Badge variant="secondary">{folderBookmarks.length}</Badge>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className="px-4 pt-4">
-                    <div className="grid grid-cols-1 gap-4">
-                      {folderBookmarks.map((bookmark: any) => (
-                        <Card key={bookmark._id} className="shadow-card">
-                          <CardHeader>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-1 flex-1">
-                                <CardTitle className="text-base md:text-lg">
-                                  {bookmark.quiz?.title || 'Untitled Quiz'}
-                                </CardTitle>
-                                <p className="text-xs md:text-sm text-muted-foreground">
-                                  {bookmark.quiz?.description || 'No description'}
-                                </p>
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                  <Badge variant="outline">
-                                    {bookmark.quiz?.numQuestions || 0} Questions
-                                  </Badge>
-                                  <Badge variant="outline">
-                                    {bookmark.quiz?.difficulty || 'medium'}
-                                  </Badge>
-                                  <Badge variant="outline">
-                                    {bookmark.quiz?.duration || 30} mins
-                                  </Badge>
-                                </div>
-                              </div>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openShareDialog(bookmark)}
-                                >
-                                  <Share2 className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleEditInQuiz(bookmark)}
-                                >
-                                  <FileEdit className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => handleDeleteBookmark(bookmark._id)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <Accordion type="single" collapsible>
-                              <AccordionItem value="questions">
-                                <AccordionTrigger className="text-sm">
-                                  View All Questions (
-                                  {bookmark.quiz?.questions?.length || 0})
-                                </AccordionTrigger>
-                                <AccordionContent>
-                                  <div className="space-y-3">
-                                    {bookmark.quiz?.questions?.map(
-                                      (q: any, idx: number) => (
-                                        <Card key={q.id || idx} className="p-3">
-                                          <div className="space-y-2">
-                                            <div className="flex items-start justify-between gap-2">
-                                              <p className="text-sm font-medium flex-1">
-                                                {idx + 1}. {q.question}
-                                              </p>
-                                              <Badge
-                                                variant="secondary"
-                                                className="text-xs capitalize"
-                                              >
-                                                {q.type}
-                                              </Badge>
-                                            </div>
-                                            {q.options && q.options.length > 0 && (
-                                              <div className="space-y-1 pl-4">
-                                                {q.options.map(
-                                                  (opt: string, i: number) => (
-                                                    <p
-                                                      key={i}
-                                                      className="text-xs text-muted-foreground"
-                                                    >
-                                                      {String.fromCharCode(65 + i)}. {opt}
-                                                    </p>
-                                                  ),
-                                                )}
-                                              </div>
-                                            )}
-                                            {q.explanation && (
-                                              <p className="text-xs text-muted-foreground italic pl-4">
-                                                💡 {q.explanation}
-                                              </p>
+                return (
+                  <motion.div
+                    key={folderId}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{
+                      duration: 0.22,
+                      delay: index * 0.03,
+                    }}
+                  >
+                    <AccordionItem
+                      value={folderId}
+                      className="border rounded-xl bg-background/70 backdrop-blur"
+                    >
+                      <AccordionTrigger className="px-4 hover:no-underline">
+                        <div className="flex items-center gap-2">
+                          <Folder className="h-5 w-5 text-primary" />
+                          <span className="font-semibold">
+                            {folderName}
+                          </span>
+                          <Badge variant="secondary">
+                            {folderBookmarks.length}
+                          </Badge>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-4 pt-4 pb-4">
+                        <div className="grid grid-cols-1 gap-4">
+                          {folderBookmarks.map(
+                            (bookmark: any, i: number) => (
+                              <motion.div
+                                key={bookmark._id}
+                                initial={{ opacity: 0, y: 12 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{
+                                  duration: 0.22,
+                                  delay: i * 0.03,
+                                }}
+                              >
+                                <Card className="shadow-card border border-slate-200/70 hover:border-primary/40 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5">
+                                  <CardHeader>
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="space-y-1 flex-1">
+                                        <CardTitle className="text-base md:text-lg">
+                                          {bookmark.quiz?.title ||
+                                            'Untitled Quiz'}
+                                        </CardTitle>
+                                        <p className="text-xs md:text-sm text-muted-foreground">
+                                          {bookmark.quiz?.description ||
+                                            'No description'}
+                                        </p>
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                          <Badge variant="outline">
+                                            {bookmark.quiz
+                                              ?.numQuestions || 0}{' '}
+                                            Questions
+                                          </Badge>
+                                          <Badge variant="outline">
+                                            {bookmark.quiz?.difficulty ||
+                                              'medium'}
+                                          </Badge>
+                                          <Badge variant="outline">
+                                            {bookmark.quiz?.duration ||
+                                              30}{' '}
+                                            mins
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="hover:bg-primary/10"
+                                          onClick={() =>
+                                            openShareDialog(bookmark)
+                                          }
+                                        >
+                                          <Share2 className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="hover:bg-primary/10"
+                                          onClick={() =>
+                                            handleEditInQuiz(bookmark)
+                                          }
+                                        >
+                                          <FileEdit className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="destructive"
+                                          onClick={() =>
+                                            handleDeleteBookmark(
+                                              bookmark._id
+                                            )
+                                          }
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </CardHeader>
+                                  <CardContent>
+                                    <Accordion type="single" collapsible>
+                                      <AccordionItem value="questions">
+                                        <AccordionTrigger className="text-sm">
+                                          View All Questions (
+                                          {bookmark.quiz?.questions?.length ||
+                                            0}
+                                          )
+                                        </AccordionTrigger>
+                                        <AccordionContent>
+                                          <div className="space-y-3">
+                                            {bookmark.quiz?.questions?.map(
+                                              (q: any, idx: number) => (
+                                                <Card
+                                                  key={q.id || idx}
+                                                  className="p-3 border-slate-200/80"
+                                                >
+                                                  <div className="space-y-2">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                      <p className="text-sm font-medium flex-1">
+                                                        {idx + 1}.{' '}
+                                                        {q.question}
+                                                      </p>
+                                                      <Badge
+                                                        variant="secondary"
+                                                        className="text-xs capitalize"
+                                                      >
+                                                        {q.type}
+                                                      </Badge>
+                                                    </div>
+                                                    {q.options &&
+                                                      q.options.length >
+                                                        0 && (
+                                                        <div className="space-y-1 pl-4">
+                                                          {q.options.map(
+                                                            (
+                                                              opt: string,
+                                                              oi: number
+                                                            ) => (
+                                                              <p
+                                                                key={
+                                                                  oi
+                                                                }
+                                                                className="text-xs text-muted-foreground"
+                                                              >
+                                                                {String.fromCharCode(
+                                                                  65 +
+                                                                    oi
+                                                                )}
+                                                                .{' '}
+                                                                {opt}
+                                                              </p>
+                                                            )
+                                                          )}
+                                                        </div>
+                                                      )}
+                                                    {q.explanation && (
+                                                      <p className="text-xs text-muted-foreground italic pl-4">
+                                                        💡{' '}
+                                                        {
+                                                          q.explanation
+                                                        }
+                                                      </p>
+                                                    )}
+                                                  </div>
+                                                </Card>
+                                              )
                                             )}
                                           </div>
-                                        </Card>
-                                      ),
-                                    )}
-                                  </div>
-                                </AccordionContent>
-                              </AccordionItem>
-                            </Accordion>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              );
-            },
-          )}
+                                        </AccordionContent>
+                                      </AccordionItem>
+                                    </Accordion>
+                                  </CardContent>
+                                </Card>
+                              </motion.div>
+                            )
+                          )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </motion.div>
+                );
+              }
+            )}
+          </AnimatePresence>
         </Accordion>
       )}
 
@@ -536,21 +661,30 @@ export default function BookmarksPage() {
                     const id = student._id;
                     const isSelected = selectedStudents.includes(id);
                     return (
-                      <TableRow
+                      <motion.tr
                         key={id}
-                        className={isSelected ? 'bg-primary/5' : ''}
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className={
+                          'border-b last:border-b-0 ' +
+                          (isSelected ? 'bg-primary/5' : '')
+                        }
                       >
                         <TableCell>
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={() => toggleStudentSelection(id)}
+                            onChange={() =>
+                              toggleStudentSelection(id)
+                            }
                           />
                         </TableCell>
                         <TableCell>{student.name}</TableCell>
                         <TableCell>{student.email}</TableCell>
                         <TableCell>{student.usn}</TableCell>
-                      </TableRow>
+                      </motion.tr>
                     );
                   })}
 
@@ -570,16 +704,22 @@ export default function BookmarksPage() {
           </div>
 
           <div className="flex gap-2 justify-end mt-4">
-            <Button variant="outline" onClick={() => setShareDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setShareDialogOpen(false)}
+            >
               Cancel
             </Button>
-            <Button onClick={handleShareQuiz} disabled={students.length === 0}>
+            <Button
+              onClick={handleShareQuiz}
+              disabled={students.length === 0}
+            >
               <Share2 className="h-4 w-4 mr-2" />
               Share Quiz
             </Button>
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </motion.div>
   );
 }
