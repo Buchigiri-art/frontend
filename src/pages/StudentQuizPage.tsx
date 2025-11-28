@@ -135,36 +135,25 @@ export default function StudentQuizPage() {
     }
   }, [quizStarted, quizSubmitted]);
 
-  // ------------- Quiz countdown -----------------
+  // ------------- Quiz countdown (fixed, single interval) -----------------
   useEffect(() => {
-    if (!quizStarted || quizSubmitted || timeLeft <= 0) return;
+    if (!quizStarted || quizSubmitted) return;
 
-    let expected = Date.now() + 1000;
-    const tick = () => {
+    const intervalId = setInterval(() => {
       if (!quizActiveRef.current || quizSubmittedRef.current) return;
-      const now = Date.now();
-      const drift = now - expected;
-
-      if (drift > 1000) {
-        expected = now + 1000;
-      } else {
-        expected += 1000;
-      }
 
       setTimeLeft((prev) => {
         if (prev <= 1) {
+          // Time is up: normal submit (not cheated)
           handleSubmitQuiz();
           return 0;
         }
         return prev - 1;
       });
+    }, 1000);
 
-      setTimeout(tick, Math.max(0, 1000 - drift));
-    };
-
-    const timerId = setTimeout(tick, 1000);
-    return () => clearTimeout(timerId);
-  }, [quizStarted, timeLeft, quizSubmitted]);
+    return () => clearInterval(intervalId);
+  }, [quizStarted, quizSubmitted]);
 
   // ------------- Fetch quiz and attempt data -----------------
   const fetchQuizData = async () => {
@@ -298,7 +287,7 @@ export default function StudentQuizPage() {
       toast({
         title: 'Quiz Started',
         description:
-          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen, or exiting fullscreen after enabled) gives a warning and uses your 10-second global away budget. After 3 warnings or 10 seconds away total, the quiz auto-submits.',
+          'Monitoring is enabled. Any focus loss (tab/app change, going to background, split-screen, or exiting fullscreen after enabled) uses your global 10-second away budget and may give warnings. After 3 warnings or after the full 10 seconds away total, the quiz auto-submits as cheated.',
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
@@ -546,7 +535,7 @@ export default function StudentQuizPage() {
         remainingWarnings > 0
           ? `Violation detected (${reason}). ${remainingWarnings} warning(s) remaining before auto-submit. Away time left: ${Math.ceil(
               remainingMs / 1000,
-            )} second${remainingMs > 1000 ? 's' : ''}.`
+            )} second${remainingMs > 1000 ? 's' : ''} (global 10-second limit).`
           : `Violation detected (${reason}). Limit reached; quiz will be auto-submitted.`,
       variant: remainingWarnings > 0 ? 'default' : 'destructive',
     });
@@ -562,17 +551,26 @@ export default function StudentQuizPage() {
   };
 
   // ------------------ Unified focus-loss handler ------------------
-  const handleFocusLostViolation = (reasonBase: string, stillAwayCheck: () => boolean) => {
+  const handleFocusLostViolation = (
+    reasonBase: string,
+    stillAwayCheck: () => boolean,
+  ) => {
     if (!guard()) return;
 
-    // Check global budget
+    // Re-check: if user already came back, do nothing
+    if (!stillAwayCheck()) {
+      handleReturnToFocus();
+      return;
+    }
+
+    // Check global away-time budget
     const currentRemaining = getRemainingLeaveMs();
     if (currentRemaining <= 0) {
       handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
       return;
     }
 
-    // Already away -> don't warn again, just update time
+    // Already in an away episode -> just update time, no new warning
     if (isAwayRef.current) {
       const remaining = getRemainingLeaveMs();
       setLeaveTimeLeft(remaining);
@@ -872,11 +870,11 @@ export default function StudentQuizPage() {
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. Any time this quiz loses focus or goes behind another
-                app/tab (including split-screen or going to background), you get a warning.
-                After 3 warnings, the quiz is blocked and auto-submitted. Leaving the quiz
-                screen uses your{' '}
-                <span className="font-semibold">10-second total away budget</span>; once that
-                is exhausted, the quiz is auto-submitted even if warnings are less than 3.
+                app/tab (including split-screen or going to background), you get a warning and
+                your global{' '}
+                <span className="font-semibold">10-second away budget</span> starts counting.
+                Once your total away time reaches 10 seconds, the quiz is auto-submitted as
+                cheated, even if warnings are fewer than 3.
               </p>
             </div>
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
@@ -914,9 +912,9 @@ export default function StudentQuizPage() {
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
                 {isAway && leaveTimeLeft > 0 && (
-                  <p className="text-xs text-warning mt-1">
+                  <p className="text-xs text-destructive mt-1">
                     Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
-                    {leaveTimeLeft > 1000 ? 's' : ''} left (global 10s limit)
+                    {leaveTimeLeft > 1000 ? 's' : ''} left (global 10-second limit)
                   </p>
                 )}
               </div>
