@@ -573,7 +573,7 @@ export default function StudentQuizPage() {
           ? `Violation detected (${reason}). ${remainingWarnings} warning(s) remaining before auto-submit. Away time left: ${Math.ceil(
               remainingMs / 1000,
             )} second${remainingMs > 1000 ? 's' : ''} (global 10-second limit).`
-          : `Violation detected (${reason}). Limit reached; quiz will be auto-submitted.`,
+          : `Violation detected (${reason}). You have reached the maximum warnings. The next violation will auto-submit the quiz.`,
       variant: remainingWarnings > 0 ? 'default' : 'destructive',
     });
 
@@ -600,9 +600,10 @@ export default function StudentQuizPage() {
       return;
     }
 
-    // Check global away-time budget
+    // Check global away-time budget (already fully used)
     const currentRemaining = getRemainingLeaveMs();
     if (currentRemaining <= 0) {
+      // No budget left at all: any further focus loss = immediate auto-submit
       handleAutoSubmitAsCheat(`${reasonBase}:no-budget-left`);
       return;
     }
@@ -618,26 +619,23 @@ export default function StudentQuizPage() {
     }
 
     // New away episode
+    // If already at max warnings, this extra violation = auto-submit
+    if (localWarningsRef.current >= MAX_WARNINGS) {
+      handleAutoSubmitAsCheat(`${reasonBase}:max-warnings-exceeded`);
+      return;
+    }
+
+    // Start away episode
     isAwayRef.current = true;
     setIsAway(true);
     awayStartAtRef.current = Date.now();
     setLeaveTimeLeft(currentRemaining);
     hasEpisodeWarningRef.current = false;
 
-    // Single warning per away episode
+    // Single warning per away episode (1st/2nd/3rd violations)
     if (!hasEpisodeWarningRef.current && localWarningsRef.current < MAX_WARNINGS) {
       sendFlag(reasonBase);
       hasEpisodeWarningRef.current = true;
-    }
-
-    const afterRemaining = getRemainingLeaveMs();
-    if (afterRemaining <= 0) {
-      handleAutoSubmitAsCheat(`${reasonBase}:timeout`);
-      return;
-    }
-
-    if (localWarningsRef.current >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat(`${reasonBase}:max-warnings`);
     }
   };
 
@@ -684,15 +682,17 @@ export default function StudentQuizPage() {
     lastViolationTimeRef.current = now;
 
     if (localWarningsRef.current < MAX_WARNINGS) {
+      // still under max → warning only
       sendFlag('clipboard:copy');
-    }
-    if (localWarningsRef.current >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('clipboard:copy:max-warnings');
+    } else {
+      // already at max → this extra violation auto-submits
+      handleAutoSubmitAsCheat('clipboard:copy:max-warnings-exceeded');
     }
   };
 
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (!guard()) return;
+    // Trying to leave the page entirely → treat as cheating immediately
     sendFlag('attempt:beforeunload');
     handleAutoSubmitAsCheat('attempt:beforeunload');
     e.preventDefault();
@@ -708,9 +708,8 @@ export default function StudentQuizPage() {
 
     if (localWarningsRef.current < MAX_WARNINGS) {
       sendFlag('contextmenu:block');
-    }
-    if (localWarningsRef.current >= MAX_WARNINGS) {
-      handleAutoSubmitAsCheat('contextmenu:block:max-warnings');
+    } else {
+      handleAutoSubmitAsCheat('contextmenu:block:max-warnings-exceeded');
     }
   };
 
@@ -736,9 +735,8 @@ export default function StudentQuizPage() {
 
       if (localWarningsRef.current < MAX_WARNINGS) {
         sendFlag(reason);
-      }
-      if (localWarningsRef.current >= MAX_WARNINGS) {
-        handleAutoSubmitAsCheat(`${reason}:max-warnings`);
+      } else {
+        handleAutoSubmitAsCheat(`${reason}:max-warnings-exceeded`);
       }
     }
   };
