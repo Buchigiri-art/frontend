@@ -409,7 +409,10 @@ export default function StudentQuizPage() {
 
   const handleReturnToFocus = () => {
     if (!quizActiveRef.current || quizSubmittedRef.current) return;
-    if (!isAwayRef.current) return;
+    if (!isAwayRef.current) {
+      setLeaveTimeLeft(getRemainingLeaveMs());
+      return;
+    }
 
     // Close current away episode and accumulate time
     if (awayStartAtRef.current !== null) {
@@ -432,21 +435,17 @@ export default function StudentQuizPage() {
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
     window.addEventListener('focus', onWindowFocus, true);
-    window.addEventListener('blur', onWindowBlur, true);
+    // NOTE: we no longer handle "blur" here; polling loop covers it
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
 
-    // pagehide often fires on mobile when going home:
-    // ignore it for mobile to avoid duplicate warnings
     if (!isMobile) {
       window.addEventListener('pagehide', onPageHide, true);
     }
 
     document.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('keydown', onKeyDown, true);
-
-    window.addEventListener('resize', onWindowResize, true);
 
     isAwayRef.current = false;
     hasEpisodeWarningRef.current = false;
@@ -463,7 +462,6 @@ export default function StudentQuizPage() {
 
     document.removeEventListener('visibilitychange', onVisibilityChange, true);
     window.removeEventListener('focus', onWindowFocus, true);
-    window.removeEventListener('blur', onWindowBlur, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
@@ -474,29 +472,67 @@ export default function StudentQuizPage() {
 
     document.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('keydown', onKeyDown, true);
-
-    window.removeEventListener('resize', onWindowResize, true);
   };
 
   const pollFocusVisibility = useCallback(() => {
-    if (!guard() || !monitoringRef.current) return;
+    if (!monitoringRef.current) return;
+
+    // If quiz not active, just reschedule check and bail
+    if (!guard()) {
+      requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
+      return;
+    }
 
     const fullscreenOk =
       !didEnterFullscreenRef.current || !!document.fullscreenElement;
 
+    // Detect split-screen / resized window as "lost"
+    let splitLost = false;
+    try {
+      const sw = window.screen.width || window.innerWidth;
+      const sh = window.screen.height || window.innerHeight;
+      if (sw && sh) {
+        const wr = window.innerWidth / sw;
+        const hr = window.innerHeight / sh;
+        if (wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD) {
+          splitLost = true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     const lost =
       document.visibilityState !== 'visible' ||
       !(document.hasFocus && document.hasFocus()) ||
-      !fullscreenOk;
+      !fullscreenOk ||
+      splitLost;
 
     if (lost) {
       handleFocusLostViolation('poll:focus-visibility', () => {
         const fullscreenOkInner =
           !didEnterFullscreenRef.current || !!document.fullscreenElement;
+
+        let splitLostInner = false;
+        try {
+          const sw2 = window.screen.width || window.innerWidth;
+          const sh2 = window.screen.height || window.innerHeight;
+          if (sw2 && sh2) {
+            const wr2 = window.innerWidth / sw2;
+            const hr2 = window.innerHeight / sh2;
+            if (wr2 < SPLIT_DIM_THRESHOLD || hr2 < SPLIT_DIM_THRESHOLD) {
+              splitLostInner = true;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
         return (
           document.visibilityState !== 'visible' ||
           !(document.hasFocus && document.hasFocus()) ||
-          !fullscreenOkInner
+          !fullscreenOkInner ||
+          splitLostInner
         );
       });
     } else {
@@ -518,7 +554,8 @@ export default function StudentQuizPage() {
   // ---------------- Warnings management ----------------
   const sendFlag = async (reason: string) => {
     const now = performance.now();
-    if (now - (lastWarnAtRef.current || 0) < 750) {
+    if (now - (lastWarnAtRef.current || 0) < 500) {
+      // small debounce to avoid duplicate warnings from weird edge cases
       return;
     }
     lastWarnAtRef.current = now;
@@ -604,66 +641,21 @@ export default function StudentQuizPage() {
     }
   };
 
-  // ------------- Event listeners ---------------
-  const onWindowResize = () => {
-    if (!guard()) return;
-
-    try {
-      const sw = window.screen.width || window.innerWidth;
-      const sh = window.screen.height || window.innerHeight;
-      if (!sw || !sh) return;
-
-      const wr = window.innerWidth / sw;
-      const hr = window.innerHeight / sh;
-
-      if (wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD) {
-        handleFocusLostViolation('window:split-screen-or-resize', () => {
-          const sw2 = window.screen.width || window.innerWidth;
-          const sh2 = window.screen.height || window.innerHeight;
-          if (!sw2 || !sh2) return false;
-          const wr2 = window.innerWidth / sw2;
-          const hr2 = window.innerHeight / sh2;
-          return wr2 < SPLIT_DIM_THRESHOLD || hr2 < SPLIT_DIM_THRESHOLD;
-        });
-      }
-    } catch (err) {
-      console.warn('Error during resize check', err);
-    }
-  };
-
+  // ------------- Event listeners (auxiliary) ---------------
   const onVisibilityChange = () => {
     if (!guard()) return;
 
     if (document.visibilityState === 'visible') {
+      // Coming back -> ensure we close the away episode properly
       handleReturnToFocus();
-      return;
     }
-
-    const firedAt = performance.now();
-    setTimeout(() => {
-      if (!guard()) return;
-      if (document.visibilityState === 'visible') return;
-      if (performance.now() - firedAt < 250) return;
-      handleFocusLostViolation('visibility:hidden', () => document.visibilityState !== 'visible');
-    }, 300);
+    // We do NOT call handleFocusLostViolation here.
+    // The polling loop is the single source of "lost" truth.
   };
 
   const onWindowFocus = () => {
     if (!guard()) return;
     handleReturnToFocus();
-  };
-
-  const onWindowBlur = () => {
-    if (!guard()) return;
-
-    const firedAt = performance.now();
-    setTimeout(() => {
-      if (!guard()) return;
-      if (document.hasFocus && document.hasFocus()) return;
-      if (performance.now() - firedAt < 250) return;
-
-      handleFocusLostViolation('window:blur', () => !(document.hasFocus && document.hasFocus()));
-    }, 300);
   };
 
   const onFullscreenChange = () => {
@@ -674,14 +666,14 @@ export default function StudentQuizPage() {
     if (isFs) {
       didEnterFullscreenRef.current = true;
       handleReturnToFocus();
-    } else if (didEnterFullscreenRef.current) {
-      handleFocusLostViolation('fullscreen:exited', () => !document.fullscreenElement);
     }
+    // When fullscreen is exited, we do NOT directly call handleFocusLostViolation.
+    // Polling will detect the lack of fullscreen and treat it as "lost" if needed.
   };
 
   const onPageHide = (_e: Event) => {
     if (!guard()) return;
-    handleFocusLostViolation('pagehide', () => document.visibilityState !== 'visible');
+    // Page hiding is considered "away" – poll loop will see visibility hidden.
   };
 
   const onCopyAttempt = (e: ClipboardEvent) => {
@@ -870,11 +862,10 @@ export default function StudentQuizPage() {
               <p className="text-sm text-muted-foreground">
                 Your details are provided by your instructor and cannot be changed here.
                 Monitoring is enabled. Any time this quiz loses focus or goes behind another
-                app/tab (including split-screen or going to background), you get a warning and
-                your global{' '}
-                <span className="font-semibold">10-second away budget</span> starts counting.
-                Once your total away time reaches 10 seconds, the quiz is auto-submitted as
-                cheated, even if warnings are fewer than 3.
+                app/tab (including split-screen or going to background), your global{' '}
+                <span className="font-semibold">10-second away budget</span> counts down.
+                After 3 warnings or when that 10 seconds is fully used, the quiz is
+                auto-submitted as cheated.
               </p>
             </div>
             <Button onClick={handleStartQuiz} className="w-full" disabled={loading}>
@@ -896,7 +887,7 @@ export default function StudentQuizPage() {
     const question = quiz.questions[currentQuestion];
     const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
 
-    const showFullscreenButton = !document.fullscreenElement;
+    const showFullscreenButton = true; // always allow trying fullscreen again
 
     return (
       <div className="min-h-screen bg-background">
@@ -911,12 +902,18 @@ export default function StudentQuizPage() {
                 <p className="text-xs text-muted-foreground">
                   Warnings: {warningCount} / {MAX_WARNINGS}
                 </p>
-                {isAway && leaveTimeLeft > 0 && (
-                  <p className="text-xs text-destructive mt-1">
-                    Away timer: {Math.ceil(leaveTimeLeft / 1000)} second
-                    {leaveTimeLeft > 1000 ? 's' : ''} left (global 10-second limit)
-                  </p>
-                )}
+                <p className="text-xs mt-1">
+                  Away budget left:{' '}
+                  <span className={leaveTimeLeft <= 3000 ? 'text-destructive font-semibold' : ''}>
+                    {Math.ceil(leaveTimeLeft / 1000)} second
+                    {leaveTimeLeft > 1000 ? 's' : ''} (global 10-second limit)
+                  </span>
+                  {isAway && (
+                    <span className="ml-1 text-xs text-destructive">
+                      — currently away / focus lost
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="flex items-center gap-2 text-lg font-semibold">
                 <Clock
