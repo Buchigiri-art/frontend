@@ -128,12 +128,12 @@ export default function QuizResultsPage() {
 
   const [page, setPage] = useState(1);
 
-  // NEW: search & sort
+  // search & sort
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('usn');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  // NEW: view mode & leaderboard control
+  // view mode & leaderboard control
   const [viewMode, setViewMode] = useState<ViewMode>('results');
   const [leaderboardCount, setLeaderboardCount] = useState<number>(5);
 
@@ -552,19 +552,19 @@ export default function QuizResultsPage() {
         {/* View: Results / Leaderboard */}
         {viewMode === 'results' ? (
           <Card>
-            <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <CardTitle>Student Results</CardTitle>
-                <CardDescription>
-                  {attempts.length > 0
-                    ? `${attempts.length} student(s) attempted this quiz`
-                    : 'No attempts yet'}
-                </CardDescription>
-              </div>
+            <CardHeader>
+              <CardTitle>Student Results</CardTitle>
+              <CardDescription>
+                {attempts.length > 0
+                  ? `${attempts.length} student(s) attempted this quiz`
+                  : 'No attempts yet'}
+              </CardDescription>
+            </CardHeader>
 
-              {/* Search + Sort controls */}
-              <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                <div className="flex items-center gap-2">
+            <CardContent>
+              {/* SEARCH + SORT BAR (this should now be clearly visible above the table) */}
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="w-full md:w-80">
                   <input
                     type="text"
                     placeholder="Search by name, USN, branch..."
@@ -573,7 +573,7 @@ export default function QuizResultsPage() {
                       setSearchTerm(e.target.value);
                       setPage(1);
                     }}
-                    className="h-9 w-full md:w-64 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   />
                 </div>
                 <div className="flex items-center gap-2 text-xs md:text-sm">
@@ -610,9 +610,7 @@ export default function QuizResultsPage() {
                   </Button>
                 </div>
               </div>
-            </CardHeader>
 
-            <CardContent>
               {attempts.length === 0 ? (
                 <div className="text-center py-12">
                   <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -797,21 +795,21 @@ export default function QuizResultsPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => setLeaderboardCount(5)}
                   >
                     Top 5
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => setLeaderboardCount(10)}
                   >
                     Top 10
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => setLeaderboardCount(20)}
                     disabled={attempts.length < 20}
