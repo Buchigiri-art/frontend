@@ -1,3 +1,4 @@
+// src/pages/CreateQuizPage.tsx
 import { useState, useEffect } from 'react';
 import {
   FileText,
@@ -11,13 +12,26 @@ import {
   X,
   Bookmark,
   PlusCircle,
+  FileScan,
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { QuestionEditor } from '@/components/QuestionEditor';
 import { AIChatInterface } from '@/components/AIChatInterface';
 import { generateQuestions } from '@/services/gemini';
@@ -58,8 +72,10 @@ export default function CreateQuizPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [moduleText, setModuleText] = useState('');
   const [numQuestions, setNumQuestions] = useState('5');
-  const [questionType, setQuestionType] = useState<'mcq' | 'short-answer' | 'mixed'>('mcq');
-  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard' | 'mixed'>('medium');
+  const [questionType, setQuestionType] =
+    useState<'mcq' | 'short-answer' | 'mixed'>('mcq');
+  const [difficulty, setDifficulty] =
+    useState<'easy' | 'medium' | 'hard' | 'mixed'>('medium');
   const [quizDuration, setQuizDuration] = useState('30');
   const [questions, setQuestions] = useState<ExtendedQuestion[]>([]);
   const [generating, setGenerating] = useState(false);
@@ -72,13 +88,19 @@ export default function CreateQuizPage() {
   const [customPrompt, setCustomPrompt] = useState('');
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [sharedLinks, setSharedLinks] = useState<{ email: string; link: string }[]>([]);
+  const [sharedLinks, setSharedLinks] = useState<
+    { email: string; link: string }[]
+  >([]);
   const [linksDialogOpen, setLinksDialogOpen] = useState(false);
 
   const [currentQuizId, setCurrentQuizId] = useState<string | null>(null);
-  const [shareProgress, setShareProgress] = useState<{ current: number; total: number } | null>(
-    null,
-  );
+  const [shareProgress, setShareProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+
+  // NEW: state for manual PDF importing
+  const [manualPdfLoading, setManualPdfLoading] = useState(false);
 
   useEffect(() => {
     const fetchStudents = async () => {
@@ -98,7 +120,9 @@ export default function CreateQuizPage() {
     }
   }, [location]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -115,8 +139,10 @@ export default function CreateQuizPage() {
         } else {
           content = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = (event) => resolve(event.target?.result as string);
-            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.onload = (event) =>
+              resolve(event.target?.result as string);
+            reader.onerror = () =>
+              reject(new Error('Failed to read file'));
             reader.readAsText(file);
           });
         }
@@ -178,7 +204,9 @@ export default function CreateQuizPage() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
       if (!apiKey) {
-        toast.error('Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env');
+        toast.error(
+          'Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your .env'
+        );
         return;
       }
 
@@ -199,18 +227,26 @@ export default function CreateQuizPage() {
       setCurrentQuizId(null);
 
       toast.success(
-        `Successfully generated ${generatedQuestions?.length || 0} AI-powered questions!`,
+        `Successfully generated ${
+          generatedQuestions?.length || 0
+        } AI-powered questions!`
       );
     } catch (error) {
       console.error('Error generating questions:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to generate questions.');
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate questions.'
+      );
     } finally {
       setGenerating(false);
     }
   };
 
   const handleUpdateQuestion = (updatedQuestion: ExtendedQuestion) => {
-    setQuestions((prev) => prev.map((q) => (q.id === updatedQuestion.id ? updatedQuestion : q)));
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === updatedQuestion.id ? updatedQuestion : q))
+    );
     setCurrentQuizId(null);
     toast.success('Question updated');
   };
@@ -232,12 +268,13 @@ export default function CreateQuizPage() {
         await bookmarksAPI.create({ question });
         toast.success('Question bookmarked');
       } else {
-        // You might want to actually delete bookmark from backend here if you support that
         toast.info('Bookmark removed from this session');
       }
 
       setQuestions((prev) =>
-        prev.map((q) => (q.id === id ? { ...q, isBookmarked: newBookmarked } : q)),
+        prev.map((q) =>
+          q.id === id ? { ...q, isBookmarked: newBookmarked } : q
+        )
       );
     } catch (error) {
       console.error('Error toggling bookmark:', error);
@@ -247,17 +284,25 @@ export default function CreateQuizPage() {
 
   const handleToggleSelect = (id: string) => {
     setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, isSelected: !q.isSelected } : q)),
+      prev.map((q) =>
+        q.id === id ? { ...q, isSelected: !q.isSelected } : q
+      )
     );
   };
 
   const handleSectionChange = (id: string, section: string) => {
-    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, section } : q)));
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, section } : q))
+    );
     setCurrentQuizId(null);
   };
 
-  const createEmptyQuestion = (type: 'mcq' | 'short-answer'): ExtendedQuestion => ({
-    id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const createEmptyQuestion = (
+    type: 'mcq' | 'short-answer'
+  ): ExtendedQuestion => ({
+    id: `manual-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`,
     // @ts-ignore (depends on your Question type)
     question: '',
     // @ts-ignore
@@ -272,8 +317,157 @@ export default function CreateQuizPage() {
   const addManualQuestion = (type: 'mcq' | 'short-answer') => {
     setQuestions((prev) => [...prev, createEmptyQuestion(type)]);
     setCurrentQuizId(null);
-    toast.success(`Blank ${type === 'mcq' ? 'MCQ' : 'Short Answer'} question added`);
+    toast.success(
+      `Blank ${type === 'mcq' ? 'MCQ' : 'Short Answer'} question added`
+    );
   };
+
+  // ---------- NEW: PDF → MCQ PARSER FOR MANUAL SECTION (Option A format) ----------
+
+  /**
+   * Parse text with pattern:
+   * 1. Question text...
+   * A. option 1
+   * B. option 2
+   * C. option 3
+   * D. option 4
+   * Answer: A
+   */
+  const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    const questionsParsed: ExtendedQuestion[] = [];
+    let i = 0;
+    let counter = 0;
+
+    const questionRegex = /^\d+\.\s+(.+)/; // 1. Question...
+    const optionRegex = /^([A-D])[)\.]\s*(.+)/i; // A. / A) text
+    const answerRegex = /^answer\s*[:\-]\s*([A-D])/i;
+
+    while (i < lines.length) {
+      const qMatch = lines[i].match(questionRegex);
+      if (!qMatch) {
+        i++;
+        continue;
+      }
+
+      let questionText = qMatch[1].trim();
+      const optionMap: Record<string, string> = {};
+      let correctLetter: string | null = null;
+
+      i++;
+
+      // Read options + answer
+      for (; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Next question encountered -> step back one and break
+        if (questionRegex.test(line)) {
+          i--; // let outer while handle this as new question
+          break;
+        }
+
+        const aMatch = line.match(answerRegex);
+        if (aMatch) {
+          correctLetter = aMatch[1].toUpperCase();
+          continue;
+        }
+
+        const oMatch = line.match(optionRegex);
+        if (oMatch) {
+          const letter = oMatch[1].toUpperCase();
+          const textPart = oMatch[2].trim();
+          optionMap[letter] = textPart;
+        }
+      }
+
+      const letters = ['A', 'B', 'C', 'D'];
+      const options = letters
+        .map((l) => optionMap[l])
+        .filter((o) => typeof o === 'string' && o.length > 0);
+
+      if (!questionText || options.length === 0) {
+        continue;
+      }
+
+      const correctIndex =
+        correctLetter && letters.includes(correctLetter)
+          ? letters.indexOf(correctLetter)
+          : -1;
+
+      const answer =
+        correctIndex >= 0 && correctIndex < options.length
+          ? options[correctIndex]
+          : '';
+
+      const q: ExtendedQuestion = {
+        id: `pdf-${Date.now()}-${counter++}`,
+        // @ts-ignore
+        question: questionText,
+        // @ts-ignore
+        answer,
+        options,
+        type: 'mcq',
+        isBookmarked: false,
+        isSelected: true,
+        section: '',
+      };
+
+      questionsParsed.push(q);
+      i++;
+    }
+
+    return questionsParsed;
+  };
+
+  const handleManualPdfUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+
+    if (!isPDFFile(file)) {
+      toast.error('Please upload a PDF file with questions.');
+      return;
+    }
+
+    try {
+      setManualPdfLoading(true);
+      toast.info(
+        `Reading questions from ${file.name} (Option A format)...`
+      );
+
+      const text = await extractTextFromPDF(file);
+      const parsedQuestions = parseQuestionsFromPdfText(text);
+
+      if (parsedQuestions.length === 0) {
+        toast.error(
+          'No questions detected. Check that your PDF uses the pattern "1. Question... A. ... B. ... C. ... D. ... Answer: A".'
+        );
+        return;
+      }
+
+      setQuestions((prev) => [...prev, ...parsedQuestions]);
+      setCurrentQuizId(null);
+
+      toast.success(
+        `Imported ${parsedQuestions.length} question(s) from PDF`
+      );
+    } catch (err) {
+      console.error('Error importing questions from PDF:', err);
+      toast.error('Failed to extract questions from PDF.');
+    } finally {
+      setManualPdfLoading(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  // ---------------------------------------------------------------------
 
   const handleExportJSON = () => {
     const selectedQuestions = questions.filter((q) => q.isSelected);
@@ -297,11 +491,16 @@ export default function CreateQuizPage() {
       toast.error('No selected questions to copy');
       return;
     }
-    navigator.clipboard.writeText(JSON.stringify(selectedQuestions, null, 2));
+    navigator.clipboard.writeText(
+      JSON.stringify(selectedQuestions, null, 2)
+    );
     toast.success('Questions copied to clipboard');
   };
 
-  const saveQuizToServer = async (title: string, selectedQuestions: ExtendedQuestion[]) => {
+  const saveQuizToServer = async (
+    title: string,
+    selectedQuestions: ExtendedQuestion[]
+  ) => {
     const duration = parseInt(quizDuration, 10);
     if (isNaN(duration) || duration <= 0) {
       throw new Error('Invalid duration value');
@@ -323,7 +522,9 @@ export default function CreateQuizPage() {
 
     const saveRes = await quizAPI.save(quizPayload as Quiz);
     const quizId =
-      saveRes.quizId || (saveRes.quiz && (saveRes.quiz._id || saveRes.quiz.id || saveRes.quizId));
+      saveRes.quizId ||
+      (saveRes.quiz &&
+        (saveRes.quiz._id || saveRes.quiz.id || saveRes.quizId));
 
     if (!quizId) {
       throw new Error('Server did not return quizId');
@@ -348,7 +549,10 @@ export default function CreateQuizPage() {
 
     setIsSavingQuiz(true);
     try {
-      const quizId = await saveQuizToServer(quizTitle, selectedQuestions);
+      const quizId = await saveQuizToServer(
+        quizTitle,
+        selectedQuestions
+      );
       toast.success('Quiz saved successfully!');
       return quizId;
     } catch (error: any) {
@@ -424,7 +628,8 @@ export default function CreateQuizPage() {
       // Resolve selected student IDs to emails
       let studentEmails = (selectedStudents || [])
         .map((s) => {
-          if (typeof s === 'string' && s.includes('@')) return s.trim();
+          if (typeof s === 'string' && s.includes('@'))
+            return s.trim();
 
           try {
             const parsed = JSON.parse(String(s));
@@ -436,14 +641,17 @@ export default function CreateQuizPage() {
           }
 
           const found = students.find(
-            (st) => (st as any)._id === s || (st as any).id === s || st.email === s,
+            (st) =>
+              (st as any)._id === s ||
+              (st as any).id === s ||
+              st.email === s
           );
           return found ? found.email : '';
         })
         .filter(Boolean);
 
       studentEmails = Array.from(new Set(studentEmails)).filter(
-        (email) => typeof email === 'string' && email.includes('@'),
+        (email) => typeof email === 'string' && email.includes('@')
       );
 
       if (studentEmails.length === 0) {
@@ -455,7 +663,10 @@ export default function CreateQuizPage() {
       const allLinks: Array<{ email: string; link: string }> = [];
 
       for (let i = 0; i < studentEmails.length; i += SHARE_BATCH_SIZE) {
-        const batchEmails = studentEmails.slice(i, i + SHARE_BATCH_SIZE);
+        const batchEmails = studentEmails.slice(
+          i,
+          i + SHARE_BATCH_SIZE
+        );
 
         setShareProgress({
           current: Math.min(i + SHARE_BATCH_SIZE, total),
@@ -470,7 +681,9 @@ export default function CreateQuizPage() {
         };
 
         const result: any = await quizAPI.share(sharePayload);
-        const linksFromResult = Array.isArray(result.links) ? result.links : [];
+        const linksFromResult = Array.isArray(result.links)
+          ? result.links
+          : [];
 
         linksFromResult.forEach((l: any) => {
           if (l && l.email && l.link) {
@@ -483,14 +696,18 @@ export default function CreateQuizPage() {
 
       if (allLinks.length === 0) {
         toast(
-          'Share completed but no links were returned. Check server response in console/network.',
+          'Share completed but no links were returned. Check server response in console/network.'
         );
-        console.warn('Share result had no links. Check backend /quiz/share response.');
+        console.warn(
+          'Share result had no links. Check backend /quiz/share response.'
+        );
       } else {
         toast.success(
-          `Quiz links generated for ${allLinks.length} student(s) in ${Math.ceil(
-            total / SHARE_BATCH_SIZE,
-          )} batch(es).`,
+          `Quiz links generated for ${
+            allLinks.length
+          } student(s) in ${Math.ceil(
+            total / SHARE_BATCH_SIZE
+          )} batch(es).`
         );
         setLinksDialogOpen(true);
       }
@@ -506,9 +723,19 @@ export default function CreateQuizPage() {
         const serverMsg =
           data?.message ||
           (Array.isArray(data?.failedValidation) &&
-            data.failedValidation.map((f: any) => `${f.email || f}: ${f.reason}`).join('; ')) ||
+            data.failedValidation
+              .map(
+                (f: any) =>
+                  `${f.email || f}: ${f.reason}`
+              )
+              .join('; ')) ||
           (Array.isArray(data?.failedSend) &&
-            data.failedSend.map((f: any) => f.reason || JSON.stringify(f)).join('; ')) ||
+            data.failedSend
+              .map(
+                (f: any) =>
+                  f.reason || JSON.stringify(f)
+              )
+              .join('; ')) ||
           JSON.stringify(data);
         toast.error(`Share failed: ${serverMsg}`);
       } else {
@@ -527,7 +754,9 @@ export default function CreateQuizPage() {
       toast.error('No links to copy');
       return;
     }
-    const text = sharedLinks.map((l) => `${l.email}: ${l.link}`).join('\n');
+    const text = sharedLinks
+      .map((l) => `${l.email}: ${l.link}`)
+      .join('\n');
     await navigator.clipboard.writeText(text);
     toast.success('Links copied to clipboard');
   };
@@ -537,7 +766,9 @@ export default function CreateQuizPage() {
       toast.error('No links to download');
       return;
     }
-    const csv = sharedLinks.map((l) => `${l.email},${l.link}`).join('\n');
+    const csv = sharedLinks
+      .map((l) => `${l.email},${l.link}`)
+      .join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -556,7 +787,8 @@ export default function CreateQuizPage() {
           Create Quiz
         </h1>
         <p className="text-sm md:text-base text-muted-foreground">
-          Upload module content, generate AI-powered questions, or add your own manually.
+          Upload module content, generate AI-powered questions, import
+          existing PDFs, or add your own manually.
         </p>
       </div>
 
@@ -576,7 +808,10 @@ export default function CreateQuizPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label htmlFor="module-files" className="text-xs md:text-sm font-medium">
+                <Label
+                  htmlFor="module-files"
+                  className="text-xs md:text-sm font-medium"
+                >
                   Upload Module Files
                 </Label>
                 <label className="mt-2 flex items-center justify-center w-full h-24 md:h-32 border-2 border-dashed border-border rounded-lg hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group">
@@ -586,7 +821,8 @@ export default function CreateQuizPage() {
                       Click to upload or drag and drop
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      TXT, MD, PDF files supported (multiple files allowed)
+                      TXT, MD, PDF files supported (multiple files
+                      allowed)
                     </p>
                   </div>
                   <input
@@ -612,9 +848,15 @@ export default function CreateQuizPage() {
                         variant="secondary"
                         className="pl-3 pr-1 py-1 text-xs flex items-center gap-2 hover-scale"
                       >
-                        <span className="truncate max-w-[150px]">{file.name}</span>
+                        <span className="truncate max-w-[150px]">
+                          {file.name}
+                        </span>
                         <span className="text-[10px] text-muted-foreground">
-                          {(file.size / (1024 * 1024)).toFixed(1)}MB
+                          {(
+                            file.size /
+                            (1024 * 1024)
+                          ).toFixed(1)}
+                          MB
                         </span>
                         <Button
                           variant="ghost"
@@ -631,7 +873,10 @@ export default function CreateQuizPage() {
               )}
 
               <div>
-                <Label htmlFor="module-text" className="text-xs md:text-sm font-medium">
+                <Label
+                  htmlFor="module-text"
+                  className="text-xs md:text-sm font-medium"
+                >
                   Or Paste Module Notes
                 </Label>
                 <Textarea
@@ -659,7 +904,10 @@ export default function CreateQuizPage() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                 <div>
-                  <Label htmlFor="num-questions" className="text-xs md:text-sm font-medium">
+                  <Label
+                    htmlFor="num-questions"
+                    className="text-xs md:text-sm font-medium"
+                  >
                     Number of Questions
                   </Label>
                   <Input
@@ -675,10 +923,16 @@ export default function CreateQuizPage() {
                 </div>
 
                 <div>
-                  <Label htmlFor="question-type" className="text-xs md:text-sm font-medium">
+                  <Label
+                    htmlFor="question-type"
+                    className="text-xs md:text-sm font-medium"
+                  >
                     Question Type
                   </Label>
-                  <Select value={questionType} onValueChange={(v: any) => setQuestionType(v)}>
+                  <Select
+                    value={questionType}
+                    onValueChange={(v: any) => setQuestionType(v)}
+                  >
                     <SelectTrigger
                       id="question-type"
                       className="mt-2 h-9 md:h-10 text-xs md:text-sm"
@@ -686,18 +940,28 @@ export default function CreateQuizPage() {
                       <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="mcq">Multiple Choice</SelectItem>
-                      <SelectItem value="short-answer">Short Answer</SelectItem>
+                      <SelectItem value="mcq">
+                        Multiple Choice
+                      </SelectItem>
+                      <SelectItem value="short-answer">
+                        Short Answer
+                      </SelectItem>
                       <SelectItem value="mixed">Mixed</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div>
-                  <Label htmlFor="difficulty" className="text-xs md:text-sm font-medium">
+                  <Label
+                    htmlFor="difficulty"
+                    className="text-xs md:text-sm font-medium"
+                  >
                     Difficulty
                   </Label>
-                  <Select value={difficulty} onValueChange={(v: any) => setDifficulty(v)}>
+                  <Select
+                    value={difficulty}
+                    onValueChange={(v: any) => setDifficulty(v)}
+                  >
                     <SelectTrigger
                       id="difficulty"
                       className="mt-2 h-9 md:h-10 text-xs md:text-sm"
@@ -727,7 +991,9 @@ export default function CreateQuizPage() {
                     min="5"
                     max="180"
                     value={quizDuration}
-                    onChange={(e) => setQuizDuration(e.target.value)}
+                    onChange={(e) =>
+                      setQuizDuration(e.target.value)
+                    }
                     placeholder="30"
                     className="mt-2 h-9 md:h-10 text-xs md:text-sm"
                   />
@@ -735,13 +1001,18 @@ export default function CreateQuizPage() {
               </div>
 
               <div>
-                <Label htmlFor="custom-prompt" className="text-xs md:text-sm font-medium">
+                <Label
+                  htmlFor="custom-prompt"
+                  className="text-xs md:text-sm font-medium"
+                >
                   Custom Instructions (Optional)
                 </Label>
                 <Textarea
                   id="custom-prompt"
                   value={customPrompt}
-                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  onChange={(e) =>
+                    setCustomPrompt(e.target.value)
+                  }
                   placeholder="E.g., Focus on practical applications, include code examples..."
                   className="mt-2 min-h-[60px] text-xs md:text-sm"
                 />
@@ -749,11 +1020,17 @@ export default function CreateQuizPage() {
 
               <Button
                 onClick={() => handleGenerateQuestions()}
-                disabled={generating || (uploadedFiles.length === 0 && !moduleText.trim())}
+                disabled={
+                  generating ||
+                  (uploadedFiles.length === 0 &&
+                    !moduleText.trim())
+                }
                 className="w-full gradient-primary hover:opacity-90 hover-scale h-10 md:h-11 text-xs md:text-sm font-semibold transition-all"
               >
                 {generating ? (
-                  <span className="animate-pulse">Generating AI Questions...</span>
+                  <span className="animate-pulse">
+                    Generating AI Questions...
+                  </span>
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4 md:h-5 md:w-5 mr-2" />
@@ -764,7 +1041,7 @@ export default function CreateQuizPage() {
             </CardContent>
           </Card>
 
-          {/* Manual Question Creation */}
+          {/* Manual Question Creation + PDF Import */}
           <Card className="shadow-card hover-scale transition-all">
             <CardHeader className="space-y-1 md:space-y-2 pb-3 md:pb-4">
               <CardTitle className="flex items-center gap-2 text-base md:text-lg lg:text-xl">
@@ -772,36 +1049,84 @@ export default function CreateQuizPage() {
                 Manual Questions
               </CardTitle>
               <CardDescription className="text-xs md:text-sm">
-                Add your own questions without using AI. These will be saved and shared like AI
-                questions.
+                Add your own questions without using AI, or import
+                existing question papers (PDF – Option A pattern).
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col sm:flex-row gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1"
-                onClick={() => addManualQuestion('mcq')}
-              >
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Add MCQ Question
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1"
-                onClick={() => addManualQuestion('short-answer')}
-              >
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Add Short Answer Question
-              </Button>
+            <CardContent className="space-y-4">
+              {/* Manual add buttons */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => addManualQuestion('mcq')}
+                >
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Add MCQ Question
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => addManualQuestion('short-answer')}
+                >
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Add Short Answer Question
+                </Button>
+              </div>
+
+              {/* PDF import (Option A) */}
+              <div className="pt-2 border-t mt-2 space-y-2">
+                <Label className="text-xs md:text-sm font-medium flex items-center gap-2">
+                  <FileScan className="h-4 w-4 text-primary" />
+                  Import Questions from PDF (Option A Format)
+                </Label>
+                <p className="text-[11px] md:text-xs text-muted-foreground">
+                  Expected pattern inside PDF:
+                  <br />
+                  <code className="font-mono">
+                    1. Question text...
+                    <br />
+                    A. Option 1
+                    <br />
+                    B. Option 2
+                    <br />
+                    C. Option 3
+                    <br />
+                    D. Option 4
+                    <br />
+                    Answer: A
+                  </code>
+                </p>
+                <label className="mt-1 flex items-center justify-center w-full h-20 md:h-24 border border-dashed border-border rounded-lg hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group">
+                  <div className="text-center p-2">
+                    <FileScan className="h-6 w-6 mx-auto text-muted-foreground mb-1 group-hover:text-primary transition-colors" />
+                    <p className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                      {manualPdfLoading
+                        ? 'Processing PDF...'
+                        : 'Click to upload question paper (PDF)'}
+                    </p>
+                  </div>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleManualPdfUpload}
+                    className="hidden"
+                    disabled={manualPdfLoading}
+                  />
+                </label>
+              </div>
             </CardContent>
           </Card>
         </div>
 
         {/* Right Column - AI Chat */}
         <div className="lg:col-span-1">
-          <AIChatInterface onPromptSubmit={handleGenerateQuestions} isGenerating={generating} />
+          <AIChatInterface
+            onPromptSubmit={handleGenerateQuestions}
+            isGenerating={generating}
+          />
         </div>
       </div>
 
@@ -812,9 +1137,12 @@ export default function CreateQuizPage() {
             <CardHeader>
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <CardTitle>Questions ({selectedCount} selected)</CardTitle>
+                  <CardTitle>
+                    Questions ({selectedCount} selected)
+                  </CardTitle>
                   <CardDescription>
-                    Review, edit, assign sections, and bookmark questions below
+                    Review, edit, assign sections, and bookmark questions
+                    below
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
@@ -849,14 +1177,23 @@ export default function CreateQuizPage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">Q{index + 1}</Badge>
                       <span className="text-xs md:text-sm text-muted-foreground uppercase">
-                        {question.type === 'mcq' ? 'MCQ' : 'Short Answer'}
+                        {question.type === 'mcq'
+                          ? 'MCQ'
+                          : 'Short Answer'}
                       </span>
                     </div>
                     <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-                      <Label className="text-xs md:text-sm">Section</Label>
+                      <Label className="text-xs md:text-sm">
+                        Section
+                      </Label>
                       <Input
                         value={question.section || ''}
-                        onChange={(e) => handleSectionChange(question.id, e.target.value)}
+                        onChange={(e) =>
+                          handleSectionChange(
+                            question.id,
+                            e.target.value
+                          )
+                        }
                         placeholder="e.g., Section A, Part 1..."
                         className="h-8 md:h-9 text-xs md:text-sm max-w-xs"
                       />
@@ -903,7 +1240,9 @@ export default function CreateQuizPage() {
                   className="flex-1 gradient-primary hover:opacity-90"
                 >
                   <Save className="h-4 w-4 mr-2" />
-                  {isSavingQuiz ? 'Saving Quiz...' : 'Save Quiz (Backend)'}
+                  {isSavingQuiz
+                    ? 'Saving Quiz...'
+                    : 'Save Quiz (Backend)'}
                 </Button>
 
                 <Button
@@ -916,11 +1255,16 @@ export default function CreateQuizPage() {
                   Bookmark Quiz
                 </Button>
 
-                <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+                <Dialog
+                  open={shareDialogOpen}
+                  onOpenChange={setShareDialogOpen}
+                >
                   <DialogTrigger asChild>
                     <Button
                       variant="outline"
-                      disabled={selectedCount === 0 || students.length === 0}
+                      disabled={
+                        selectedCount === 0 || students.length === 0
+                      }
                       className="flex-1"
                     >
                       <Share2 className="h-4 w-4 mr-2" />
@@ -930,10 +1274,13 @@ export default function CreateQuizPage() {
 
                   <DialogContent className="sm:max-w-4xl w-[95vw] max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Share Quiz with Students</DialogTitle>
+                      <DialogTitle>
+                        Share Quiz with Students
+                      </DialogTitle>
                       <DialogDescription>
-                        Select students to share this quiz with. Unique links will be generated and
-                        sent to their email. Delivery time depends on your email provider.
+                        Select students to share this quiz with. Unique
+                        links will be generated and sent to their email.
+                        Delivery time depends on your email provider.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="mt-4 space-y-4">
@@ -945,14 +1292,17 @@ export default function CreateQuizPage() {
                       />
                       {shareProgress && (
                         <p className="text-xs text-muted-foreground">
-                          Sharing... {shareProgress.current}/{shareProgress.total} students
-                          processed
+                          Sharing... {shareProgress.current}/
+                          {shareProgress.total} students processed
                         </p>
                       )}
                       <div className="flex justify-end">
                         <Button
                           onClick={handleShareQuiz}
-                          disabled={selectedStudents.length === 0 || isSharingQuiz}
+                          disabled={
+                            selectedStudents.length === 0 ||
+                            isSharingQuiz
+                          }
                           className="w-full sm:w-auto gradient-primary"
                         >
                           {isSharingQuiz
@@ -975,21 +1325,31 @@ export default function CreateQuizPage() {
           <DialogHeader>
             <DialogTitle>Generated Quiz Links</DialogTitle>
             <DialogDescription>
-              Copy or download links for distribution to your students. Email delivery can still be
-              delayed by your mail provider; you can send these links manually if needed.
+              Copy or download links for distribution to your students.
+              Email delivery can still be delayed by your mail provider;
+              you can send these links manually if needed.
             </DialogDescription>
           </DialogHeader>
 
           <div className="mt-4 space-y-3">
             {sharedLinks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No links available.</p>
+              <p className="text-sm text-muted-foreground">
+                No links available.
+              </p>
             ) : (
               <div className="max-h-72 overflow-auto border rounded-md p-2">
                 <ul className="divide-y">
                   {sharedLinks.map((l, i) => (
-                    <li key={`${l.email}-${i}`} className="py-2 space-y-1">
-                      <div className="text-sm font-medium">{l.email}</div>
-                      <div className="text-xs truncate">{l.link}</div>
+                    <li
+                      key={`${l.email}-${i}`}
+                      className="py-2 space-y-1"
+                    >
+                      <div className="text-sm font-medium">
+                        {l.email}
+                      </div>
+                      <div className="text-xs truncate">
+                        {l.link}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -997,7 +1357,11 @@ export default function CreateQuizPage() {
             )}
 
             <div className="flex flex-wrap gap-2 justify-end">
-              <Button variant="outline" onClick={copyAllLinks} disabled={sharedLinks.length === 0}>
+              <Button
+                variant="outline"
+                onClick={copyAllLinks}
+                disabled={sharedLinks.length === 0}
+              >
                 <Copy className="h-4 w-4 mr-2" /> Copy All
               </Button>
               <Button
@@ -1007,7 +1371,9 @@ export default function CreateQuizPage() {
               >
                 <Download className="h-4 w-4 mr-2" /> Download CSV
               </Button>
-              <Button onClick={() => setLinksDialogOpen(false)}>Close</Button>
+              <Button onClick={() => setLinksDialogOpen(false)}>
+                Close
+              </Button>
             </div>
           </div>
         </DialogContent>
