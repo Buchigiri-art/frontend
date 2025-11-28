@@ -751,12 +751,12 @@ export default function StudentQuizPage() {
       if (!body.dataset.prevWebkitTouchCallout)
         body.dataset.prevWebkitTouchCallout = (body.style as any).webkitTouchCallout || '';
       if (!body.dataset.prevTouchAction) body.dataset.prevTouchAction = body.style.touchAction || '';
-      if (!body.dataset.prevOverflow) body.dataset.prevOverflow = body.style.overflow || '';
+      // NOTE: we no longer store/override overflow here
 
       body.style.userSelect = 'none';
       (body.style as any).webkitTouchCallout = 'none';
       body.style.touchAction = 'manipulation';
-      body.style.overflow = 'hidden';
+      // body.style.overflow is left alone so scrolling still works
     } catch {
       // ignore
     }
@@ -771,13 +771,10 @@ export default function StudentQuizPage() {
         (body.style as any).webkitTouchCallout = body.dataset.prevWebkitTouchCallout;
       if (body.dataset.prevTouchAction !== undefined)
         body.style.touchAction = body.dataset.prevTouchAction;
-      if (body.dataset.prevOverflow !== undefined)
-        body.style.overflow = body.dataset.prevOverflow;
 
       delete body.dataset.prevUserSelect;
       delete body.dataset.prevWebkitTouchCallout;
       delete body.dataset.prevTouchAction;
-      delete body.dataset.prevOverflow;
     } catch {
       // ignore
     }
