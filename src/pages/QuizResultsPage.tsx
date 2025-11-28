@@ -1,5 +1,5 @@
 // src/pages/QuizResultsPage.tsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -95,8 +95,21 @@ const optionLabel = (index: number) => String.fromCharCode(65 + index);
 // normalize strings for comparison
 const normalize = (v?: string) => (v ?? '').trim().toLowerCase();
 
+// extract numeric part from USN for ordering like 001, 002, etc
+const extractUsnNumber = (usn?: string) => {
+  if (!usn) return Number.MAX_SAFE_INTEGER;
+  const matches = usn.match(/(\d+)/g);
+  if (!matches || matches.length === 0) return Number.MAX_SAFE_INTEGER;
+  const last = matches[matches.length - 1];
+  const num = parseInt(last, 10);
+  return Number.isNaN(num) ? Number.MAX_SAFE_INTEGER : num;
+};
+
 // simple client-side pagination size
 const PAGE_SIZE = 25;
+
+type SortKey = 'usn' | 'name' | 'percentage';
+type ViewMode = 'results' | 'leaderboard';
 
 export default function QuizResultsPage() {
   const { quizId } = useParams<{ quizId: string }>();
@@ -115,11 +128,56 @@ export default function QuizResultsPage() {
 
   const [page, setPage] = useState(1);
 
-  const totalPages = Math.max(1, Math.ceil(attempts.length / PAGE_SIZE));
-  const paginatedAttempts = attempts.slice(
-    (page - 1) * PAGE_SIZE,
-    page * PAGE_SIZE
-  );
+  // NEW: search & sort
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('usn');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // NEW: view mode & leaderboard control
+  const [viewMode, setViewMode] = useState<ViewMode>('results');
+  const [leaderboardCount, setLeaderboardCount] = useState<number>(5);
+
+  // track initial load to avoid resetting page every auto-refresh
+  const isInitialLoadRef = useRef(true);
+
+  const calculateStats = () => {
+    if (attempts.length === 0) return null;
+
+    const avgRaw =
+      attempts.reduce((sum, a) => sum + (a.percentage || 0), 0) /
+      attempts.length;
+    const avgPercentage = Number.isFinite(avgRaw) ? avgRaw : 0;
+    const passCount = attempts.filter((a) => (a.percentage || 0) >= 40).length;
+
+    const totalMarksArr = attempts
+      .map((a) => a.totalMarks)
+      .filter((v) => typeof v === 'number' && Number.isFinite(v));
+
+    const highestMarks = totalMarksArr.length
+      ? Math.max(...totalMarksArr)
+      : 0;
+    const lowestMarks = totalMarksArr.length
+      ? Math.min(...totalMarksArr)
+      : 0;
+
+    const percArr = attempts
+      .map((a) => a.percentage || 0)
+      .filter((v) => Number.isFinite(v));
+
+    const highestPercentage = percArr.length ? Math.max(...percArr) : 0;
+    const lowestPercentage = percArr.length ? Math.min(...percArr) : 0;
+
+    return {
+      avgPercentage: avgPercentage.toFixed(2),
+      passRate: ((passCount / attempts.length) * 100).toFixed(1),
+      highestMarks,
+      lowestMarks,
+      highestPercentage: highestPercentage.toFixed(1),
+      lowestPercentage: lowestPercentage.toFixed(1),
+    };
+  };
+
+  const stats = calculateStats();
 
   const fetchResults = useCallback(
     async () => {
@@ -138,9 +196,32 @@ export default function QuizResultsPage() {
         if (!data || !data.quiz) {
           throw new Error('Invalid response from server');
         }
+
         setQuizTitle(data.quiz.title || 'Quiz');
-        setAttempts(Array.isArray(data.attempts) ? data.attempts : []);
-        setPage(1); // whenever fresh data is loaded, reset to first page
+        const newAttempts: QuizAttempt[] = Array.isArray(data.attempts)
+          ? data.attempts
+          : [];
+
+        setAttempts(newAttempts);
+
+        setPage((prevPage) => {
+          const newTotalPages = Math.max(
+            1,
+            Math.ceil(newAttempts.length / PAGE_SIZE)
+          );
+
+          // On very first successful load, go to page 1
+          if (isInitialLoadRef.current) {
+            return 1;
+          }
+
+          // On subsequent auto-refreshes, keep current page if possible
+          return Math.min(prevPage, newTotalPages);
+        });
+
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false;
+        }
       } catch (error: any) {
         console.error('Error fetching results:', error);
         toast({
@@ -205,35 +286,6 @@ export default function QuizResultsPage() {
     }
   };
 
-  const calculateStats = () => {
-    if (attempts.length === 0) return null;
-    const avgRaw =
-      attempts.reduce((sum, a) => sum + (a.percentage || 0), 0) /
-      attempts.length;
-    const avgPercentage = Number.isFinite(avgRaw) ? avgRaw : 0;
-    const passCount = attempts.filter((a) => (a.percentage || 0) >= 40).length;
-
-    const totalMarksArr = attempts
-      .map((a) => a.totalMarks)
-      .filter((v) => typeof v === 'number' && Number.isFinite(v));
-
-    const highest = totalMarksArr.length
-      ? Math.max(...totalMarksArr)
-      : 0;
-    const lowest = totalMarksArr.length
-      ? Math.min(...totalMarksArr)
-      : 0;
-
-    return {
-      avgPercentage: avgPercentage.toFixed(2),
-      passRate: ((passCount / attempts.length) * 100).toFixed(1),
-      highestScore: highest,
-      lowestScore: lowest,
-    };
-  };
-
-  const stats = calculateStats();
-
   const openAttemptDetail = async (attempt: QuizAttempt) => {
     if (!quizId) return;
     setSelectedAttempt(attempt);
@@ -258,6 +310,80 @@ export default function QuizResultsPage() {
     }
   };
 
+  // ---------- Derived data: sorting, searching, pagination ----------
+
+  const matchesSearch = (attempt: QuizAttempt, term: string) => {
+    const t = normalize(term);
+    if (!t) return true;
+    return [
+      attempt.studentName,
+      attempt.studentUSN,
+      attempt.studentEmail,
+      attempt.studentBranch,
+      attempt.studentYear,
+      attempt.studentSemester,
+    ]
+      .map((v) => normalize(String(v)))
+      .some((v) => v.includes(t));
+  };
+
+  const sortedAttempts = [...attempts].sort((a, b) => {
+    if (sortKey === 'percentage') {
+      const av = a.percentage || 0;
+      const bv = b.percentage || 0;
+      return sortOrder === 'asc' ? av - bv : bv - av;
+    }
+
+    if (sortKey === 'name') {
+      const av = a.studentName || '';
+      const bv = b.studentName || '';
+      return sortOrder === 'asc'
+        ? av.localeCompare(bv)
+        : bv.localeCompare(av);
+    }
+
+    // default: USN numeric sort (001, 002, etc)
+    const av = extractUsnNumber(a.studentUSN);
+    const bv = extractUsnNumber(b.studentUSN);
+    if (av !== bv) {
+      return sortOrder === 'asc' ? av - bv : bv - av;
+    }
+    const ausn = a.studentUSN || '';
+    const busn = b.studentUSN || '';
+    return sortOrder === 'asc'
+      ? ausn.localeCompare(busn)
+      : busn.localeCompare(ausn);
+  });
+
+  const filteredAttempts = sortedAttempts.filter((a) =>
+    matchesSearch(a, searchTerm)
+  );
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredAttempts.length / PAGE_SIZE)
+  );
+
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedAttempts = filteredAttempts.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE
+  );
+
+  // Leaderboard data (always highest first)
+  const leaderboardAttempts = [...attempts]
+    .sort((a, b) => {
+      const ap = a.percentage || 0;
+      const bp = b.percentage || 0;
+      if (bp !== ap) return bp - ap;
+      const at = a.totalMarks || 0;
+      const bt = b.totalMarks || 0;
+      if (bt !== at) return bt - at;
+      return (a.studentName || '').localeCompare(b.studentName || '');
+    })
+    .slice(0, Math.min(leaderboardCount || 1, attempts.length));
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -270,7 +396,7 @@ export default function QuizResultsPage() {
     <div className="p-8">
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Button
@@ -282,52 +408,81 @@ export default function QuizResultsPage() {
                 Back to Results
               </Button>
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">Quiz Results</h1>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Quiz Results
+            </h1>
             <p className="text-lg text-muted-foreground">
               {quizTitle}
               {autoRefresh && (
-                <span className="ml-2 text-xs">(Auto-refreshing every 10s)</span>
+                <span className="ml-2 text-xs">
+                  (Auto-refreshing every 10s)
+                </span>
               )}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => setAutoRefresh((v) => !v)}
-              variant={autoRefresh ? 'default' : 'outline'}
-              size="sm"
-            >
-              <RefreshCw
-                className={`h-4 w-4 mr-2 ${
-                  autoRefresh ? 'animate-spin' : ''
-                }`}
-              />
-              {autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'}
-            </Button>
-            <Button
-              onClick={() => handleDownloadExcel(false)}
-              disabled={downloading || attempts.length === 0}
-            >
-              {downloading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  Download Summary
-                </>
-              )}
-            </Button>
-            <Button
-              onClick={() => handleDownloadExcel(true)}
-              disabled={downloading || attempts.length === 0}
-              variant="outline"
-            >
-              <Download className="mr-2 h-4 w-4" />
-              Detailed Report
-            </Button>
+          <div className="flex flex-col gap-2 items-end">
+            <div className="flex flex-wrap gap-2 justify-end">
+              {/* View mode toggle */}
+              <div className="flex rounded-md border bg-muted/60 p-1">
+                <Button
+                  size="sm"
+                  variant={viewMode === 'results' ? 'default' : 'ghost'}
+                  className="rounded-md"
+                  onClick={() => setViewMode('results')}
+                >
+                  Results
+                </Button>
+                <Button
+                  size="sm"
+                  variant={viewMode === 'leaderboard' ? 'default' : 'ghost'}
+                  className="rounded-md"
+                  onClick={() => setViewMode('leaderboard')}
+                >
+                  Leaderboard
+                </Button>
+              </div>
+
+              <Button
+                onClick={() => setAutoRefresh((v) => !v)}
+                variant={autoRefresh ? 'default' : 'outline'}
+                size="sm"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${
+                    autoRefresh ? 'animate-spin' : ''
+                  }`}
+                />
+                {autoRefresh ? 'Auto-refresh On' : 'Auto-refresh Off'}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 justify-end">
+              <Button
+                onClick={() => handleDownloadExcel(false)}
+                disabled={downloading || attempts.length === 0}
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Download Summary
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={() => handleDownloadExcel(true)}
+                disabled={downloading || attempts.length === 0}
+                variant="outline"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Detailed Report
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -383,152 +538,398 @@ export default function QuizResultsPage() {
                 <Award className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">
-                  {stats.lowestScore} - {stats.highestScore}
+                <div className="text-lg font-bold">
+                  {stats.lowestPercentage}% – {stats.highestPercentage}%
                 </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Marks range: {stats.lowestMarks} – {stats.highestMarks}
+                </p>
               </CardContent>
             </Card>
           </div>
         )}
 
-        {/* Results table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Student Results</CardTitle>
-            <CardDescription>
-              {attempts.length > 0
-                ? `${attempts.length} student(s) attempted this quiz`
-                : 'No attempts yet'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {attempts.length === 0 ? (
-              <div className="text-center py-12">
-                <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No Results Yet</h3>
-                <p className="text-muted-foreground">
-                  Students haven't attempted this quiz yet.
-                </p>
+        {/* View: Results / Leaderboard */}
+        {viewMode === 'results' ? (
+          <Card>
+            <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle>Student Results</CardTitle>
+                <CardDescription>
+                  {attempts.length > 0
+                    ? `${attempts.length} student(s) attempted this quiz`
+                    : 'No attempts yet'}
+                </CardDescription>
               </div>
-            ) : (
-              <>
-                <div className="rounded-md border overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Student Name</TableHead>
-                        <TableHead>USN</TableHead>
-                        <TableHead>Branch</TableHead>
-                        <TableHead>Year/Sem</TableHead>
-                        <TableHead>Score</TableHead>
-                        <TableHead>Percentage</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Submitted At</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedAttempts.map((attempt) => (
-                        <TableRow
-                          key={attempt._id}
-                          className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => openAttemptDetail(attempt)}
-                        >
-                          <TableCell className="font-medium">
-                            {attempt.studentName}
-                          </TableCell>
-                          <TableCell>{attempt.studentUSN}</TableCell>
-                          <TableCell>{attempt.studentBranch}</TableCell>
-                          <TableCell>
-                            {attempt.studentYear}/{attempt.studentSemester}
-                          </TableCell>
-                          <TableCell>
-                            {attempt.totalMarks}/{attempt.maxMarks}
-                          </TableCell>
-                          <TableCell>
-                            <span
-                              className={
-                                (attempt.percentage || 0) >= 40
-                                  ? 'text-green-600 font-semibold'
-                                  : 'text-red-600 font-semibold'
-                              }
-                            >
-                              {Number.isFinite(attempt.percentage)
-                                ? attempt.percentage.toFixed(1)
-                                : '0.0'}
-                              %
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                attempt.status === 'graded'
-                                  ? 'default'
-                                  : 'secondary'
-                              }
-                            >
-                              {attempt.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {attempt.submittedAt
-                              ? new Date(
-                                  attempt.submittedAt
-                                ).toLocaleString()
-                              : '-'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
 
-                {/* Pagination controls */}
-                {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-                    <div>
-                      Showing{' '}
-                      <span className="font-semibold">
-                        {(page - 1) * PAGE_SIZE + 1}
-                      </span>{' '}
-                      –{' '}
-                      <span className="font-semibold">
-                        {Math.min(page * PAGE_SIZE, attempts.length)}
-                      </span>{' '}
-                      of{' '}
-                      <span className="font-semibold">{attempts.length}</span>{' '}
-                      students
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        disabled={page === 1}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span>
-                        Page{' '}
-                        <span className="font-semibold">{page}</span> of{' '}
-                        <span className="font-semibold">{totalPages}</span>
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        disabled={page === totalPages}
-                        onClick={() =>
-                          setPage((p) => Math.min(totalPages, p + 1))
-                        }
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
+              {/* Search + Sort controls */}
+              <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Search by name, USN, branch..."
+                    value={searchTerm}
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      setPage(1);
+                    }}
+                    className="h-9 w-full md:w-64 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                </div>
+                <div className="flex items-center gap-2 text-xs md:text-sm">
+                  <span className="text-muted-foreground">Sort by</span>
+                  <select
+                    value={sortKey}
+                    onChange={(e) =>
+                      setSortKey(e.target.value as SortKey)
+                    }
+                    className="h-9 rounded-md border border-input bg-background px-2 py-1 text-xs md:text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <option value="usn">USN</option>
+                    <option value="name">Name</option>
+                    <option value="percentage">Percentage</option>
+                  </select>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-9 w-9"
+                    onClick={() =>
+                      setSortOrder((prev) =>
+                        prev === 'asc' ? 'desc' : 'asc'
+                      )
+                    }
+                    title={
+                      sortOrder === 'asc'
+                        ? 'Ascending'
+                        : 'Descending'
+                    }
+                  >
+                    <span className="text-xs font-semibold">
+                      {sortOrder === 'asc' ? '↑' : '↓'}
+                    </span>
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              {attempts.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">
+                    No Results Yet
+                  </h3>
+                  <p className="text-muted-foreground">
+                    Students haven't attempted this quiz yet.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-md border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Student Name</TableHead>
+                          <TableHead>USN</TableHead>
+                          <TableHead>Branch</TableHead>
+                          <TableHead>Year/Sem</TableHead>
+                          <TableHead>Score</TableHead>
+                          <TableHead>Percentage</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Submitted At</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedAttempts.map((attempt) => (
+                          <TableRow
+                            key={attempt._id}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => openAttemptDetail(attempt)}
+                          >
+                            <TableCell className="font-medium">
+                              {attempt.studentName}
+                            </TableCell>
+                            <TableCell>{attempt.studentUSN}</TableCell>
+                            <TableCell>{attempt.studentBranch}</TableCell>
+                            <TableCell>
+                              {attempt.studentYear}/{attempt.studentSemester}
+                            </TableCell>
+                            <TableCell>
+                              {attempt.totalMarks}/{attempt.maxMarks}
+                            </TableCell>
+                            <TableCell>
+                              <span
+                                className={
+                                  (attempt.percentage || 0) >= 40
+                                    ? 'text-green-600 font-semibold'
+                                    : 'text-red-600 font-semibold'
+                                }
+                              >
+                                {Number.isFinite(attempt.percentage)
+                                  ? attempt.percentage.toFixed(1)
+                                  : '0.0'}
+                                %
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  attempt.status === 'graded'
+                                    ? 'default'
+                                    : 'secondary'
+                                }
+                              >
+                                {attempt.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {attempt.submittedAt
+                                ? new Date(
+                                    attempt.submittedAt
+                                  ).toLocaleString()
+                                : '-'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+
+                  {/* Pagination controls */}
+                  {filteredAttempts.length > 0 && totalPages > 1 && (
+                    <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground flex-wrap gap-2">
+                      <div>
+                        Showing{' '}
+                        <span className="font-semibold">
+                          {(safePage - 1) * PAGE_SIZE + 1}
+                        </span>{' '}
+                        –{' '}
+                        <span className="font-semibold">
+                          {Math.min(
+                            safePage * PAGE_SIZE,
+                            filteredAttempts.length
+                          )}
+                        </span>{' '}
+                        of{' '}
+                        <span className="font-semibold">
+                          {filteredAttempts.length}
+                        </span>{' '}
+                        students
+                        {searchTerm && (
+                          <span className="ml-1 text-xs">
+                            (filtered from {attempts.length} total)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          disabled={safePage === 1}
+                          onClick={() =>
+                            setPage((p) => Math.max(1, p - 1))
+                          }
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span>
+                          Page{' '}
+                          <span className="font-semibold">
+                            {safePage}
+                          </span>{' '}
+                          of{' '}
+                          <span className="font-semibold">
+                            {totalPages}
+                          </span>
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          disabled={safePage === totalPages}
+                          onClick={() =>
+                            setPage((p) =>
+                              Math.min(totalPages, p + 1)
+                            )
+                          }
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          // ---------------- LEADERBOARD VIEW ----------------
+          <Card>
+            <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle>Leaderboard</CardTitle>
+                <CardDescription>
+                  View top performers based on highest score / percentage.
+                </CardDescription>
+              </div>
+              <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    Show Top
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={attempts.length || 1}
+                    value={leaderboardCount || ''}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (Number.isNaN(val)) {
+                        setLeaderboardCount(0);
+                      } else {
+                        setLeaderboardCount(
+                          Math.max(1, Math.min(val, attempts.length || 1))
+                        );
+                      }
+                    }}
+                    className="h-9 w-16 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <span className="text-muted-foreground">students</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setLeaderboardCount(5)}
+                  >
+                    Top 5
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setLeaderboardCount(10)}
+                  >
+                    Top 10
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setLeaderboardCount(20)}
+                    disabled={attempts.length < 20}
+                  >
+                    Top 20
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              {attempts.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">
+                    No Results Yet
+                  </h3>
+                  <p className="text-muted-foreground">
+                    Leaderboard will be available once students attempt
+                    this quiz.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-md border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Rank</TableHead>
+                          <TableHead>Student Name</TableHead>
+                          <TableHead>USN</TableHead>
+                          <TableHead>Branch</TableHead>
+                          <TableHead>Score</TableHead>
+                          <TableHead>Percentage</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {leaderboardAttempts.map((attempt, index) => {
+                          const rank = index + 1;
+                          const isTop1 = rank === 1;
+                          const isTop3 = rank <= 3;
+
+                          return (
+                            <TableRow
+                              key={attempt._id}
+                              className={`cursor-pointer hover:bg-muted/60 ${
+                                isTop1
+                                  ? 'bg-yellow-50/80'
+                                  : isTop3
+                                  ? 'bg-emerald-50/50'
+                                  : ''
+                              }`}
+                              onClick={() => openAttemptDetail(attempt)}
+                            >
+                              <TableCell className="font-semibold">
+                                <div className="flex items-center gap-2">
+                                  <span>{rank}</span>
+                                  {isTop1 && (
+                                    <span className="inline-flex items-center rounded-full bg-yellow-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
+                                      Top 1
+                                    </span>
+                                  )}
+                                  {!isTop1 && isTop3 && (
+                                    <span className="inline-flex items-center rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white tracking-wide">
+                                      Top {rank}
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {attempt.studentName}
+                              </TableCell>
+                              <TableCell>{attempt.studentUSN}</TableCell>
+                              <TableCell>{attempt.studentBranch}</TableCell>
+                              <TableCell>
+                                {attempt.totalMarks}/{attempt.maxMarks}
+                              </TableCell>
+                              <TableCell>
+                                <span
+                                  className={
+                                    (attempt.percentage || 0) >= 40
+                                      ? 'text-green-600 font-semibold'
+                                      : 'text-red-600 font-semibold'
+                                  }
+                                >
+                                  {Number.isFinite(attempt.percentage)
+                                    ? attempt.percentage.toFixed(1)
+                                    : '0.0'}
+                                  %
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    attempt.status === 'graded'
+                                      ? 'default'
+                                      : 'secondary'
+                                  }
+                                >
+                                  {attempt.status}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Leaderboard is sorted by percentage (highest first), then
+                    by total marks, then by name.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Detail dialog */}
