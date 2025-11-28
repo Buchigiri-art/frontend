@@ -339,11 +339,13 @@ export default function StudentQuizPage() {
   const handleAutoSubmitAsCheat = async (reason = 'violation:auto-submit') => {
     if (quizSubmittedRef.current) return;
 
+    // Mark quiz as cheated / blocked on the UI
     quizActiveRef.current = false;
     quizSubmittedRef.current = true;
     setIsCheated(true);
     setQuizSubmitted(true);
 
+    // 1) Flag the attempt with reason (so backend knows it's cheating)
     try {
       await axios.post(`${API_URL}/student-quiz/attempt/flag`, {
         token: tokenRef.current,
@@ -353,6 +355,8 @@ export default function StudentQuizPage() {
       console.warn('Flagging failed during auto-submit:', err);
     }
 
+    // 2) Submit whatever answers are filled right now
+    //    This is exactly like manual submit: all answers[] are sent to backend
     try {
       await axios.post(`${API_URL}/student-quiz/attempt/submit`, {
         attemptId: attemptIdRef.current || attemptId,
