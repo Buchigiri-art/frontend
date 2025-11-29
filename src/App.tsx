@@ -3,13 +3,13 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useState, useEffect, Suspense, lazy } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { DashboardLayout } from "./components/DashboardLayout";
 import LoadingScreen from "./components/LoadingScreen";
 
-// 🔹 Lazy-loaded pages
+// ✅ Lazy-load only page components
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StudentsPage = lazy(() => import("./pages/StudentsPage"));
@@ -35,14 +35,14 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        {/* Initial splash/loading screen */}
+        {/* Initial splash/loader (your custom one) */}
         {isLoading && <LoadingScreen />}
 
         <Toaster />
         <Sonner />
 
         <BrowserRouter>
-          {/* Suspense handles lazy-loaded routes */}
+          {/* Suspense for lazy-loaded pages */}
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
               <Route path="/" element={<Navigate to="/login" replace />} />
@@ -61,10 +61,7 @@ const App = () => {
                 <Route path="/create-quiz" element={<CreateQuizPage />} />
                 <Route path="/results" element={<ResultsPage />} />
                 <Route path="/bookmarks" element={<BookmarksPage />} />
-                <Route
-                  path="/quiz/:quizId/results"
-                  element={<QuizResultsPage />}
-                />
+                <Route path="/quiz/:quizId/results" element={<QuizResultsPage />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
