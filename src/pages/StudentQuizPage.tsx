@@ -291,11 +291,27 @@ export default function StudentQuizPage() {
       });
     } catch (err: any) {
       console.error('Error starting quiz:', err);
-      toast({
-        title: 'Error',
-        description: err?.response?.data?.message || 'Failed to start quiz',
-        variant: 'destructive',
-      });
+
+      const status = err?.response?.status;
+      const data = err?.response?.data;
+
+      // 🔐 SPECIAL VPN / PROXY MESSAGE
+      if (status === 403 && data?.vpnBlocked) {
+        toast({
+          title: 'VPN / Proxy Detected',
+          description:
+            data?.message ||
+            'A VPN / proxy / Tor connection was detected. Please turn it off and reload this page to start the quiz.',
+          variant: 'destructive',
+        });
+      } else {
+        // generic error
+        toast({
+          title: 'Error',
+          description: data?.message || 'Failed to start quiz',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -356,7 +372,6 @@ export default function StudentQuizPage() {
     }
 
     // 2) Submit whatever answers are filled right now
-    //    This is exactly like manual submit: all answers[] are sent to backend
     try {
       await axios.post(`${API_URL}/student-quiz/attempt/submit`, {
         attemptId: attemptIdRef.current || attemptId,
