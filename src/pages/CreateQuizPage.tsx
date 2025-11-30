@@ -336,109 +336,125 @@ export default function CreateQuizPage() {
   const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
     console.log('RAW PDF TEXT:', text); // Debug log
 
-    // Normalize the text: remove extra spaces, handle inconsistent newlines
+    // Normalize the text: handle page breaks, extra spaces, inconsistent newlines
     const normalizedText = text
+      .replace(/===== Page \d+ =====/g, '') // Remove page markers
       .replace(/\r\n/g, '\n') // Convert Windows line endings
       .replace(/\r/g, '\n')   // Convert old Mac line endings
-      .replace(/\n+/g, '\n')  // Remove multiple newlines
+      .replace(/\n\s*\n/g, '\n\n') // Normalize multiple newlines
       .replace(/[ \t]+/g, ' ') // Normalize spaces
-      .trim();
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n');
 
-    const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    
-    console.log('Normalized lines:', lines); // Debug log
+    console.log('Normalized text:', normalizedText); // Debug log
 
     const questionsParsed: ExtendedQuestion[] = [];
-    let i = 0;
-    let counter = 0;
-
+    
     // More flexible regex patterns
     const questionRegex = /^\d+[\.\)]\s*(.+)/; // 1. or 1) Question...
     const optionRegex = /^([A-D])[\)\.]\s*(.+)/i; // A. or A) text
     const answerRegex = /^answer\s*[:\-]\s*([A-D])/i; // Answer: A or Answer - A
 
-    while (i < lines.length) {
-      // Find the next question
-      let qMatch;
-      while (i < lines.length && !(qMatch = lines[i].match(questionRegex))) {
-        i++;
+    // Split by double newlines to get potential question blocks
+    const blocks = normalizedText.split(/\n\s*\n/).filter(block => block.trim().length > 0);
+    
+    console.log('Text blocks:', blocks); // Debug log
+
+    let currentQuestion: {
+      id?: string;
+      questionText?: string;
+      options: Record<string, string>;
+      correctAnswer?: string;
+    } = { options: {} };
+
+    const finalizeQuestion = () => {
+      if (currentQuestion.questionText && Object.keys(currentQuestion.options).length >= 2) {
+        const letters = ['A', 'B', 'C', 'D'];
+        const options = letters
+          .map((l) => currentQuestion.options[l] || '')
+          .filter((o) => o.length > 0);
+
+        if (options.length >= 2) {
+          const correctIndex = currentQuestion.correctAnswer 
+            ? letters.indexOf(currentQuestion.correctAnswer.toUpperCase())
+            : -1;
+
+          const answer = correctIndex >= 0 && correctIndex < options.length
+            ? options[correctIndex]
+            : '';
+
+          const q: ExtendedQuestion = {
+            id: `pdf-${Date.now()}-${questionsParsed.length}`,
+            // @ts-ignore
+            question: currentQuestion.questionText,
+            // @ts-ignore
+            answer,
+            options,
+            type: 'mcq',
+            isBookmarked: false,
+            isSelected: true,
+            section: '',
+          };
+
+          questionsParsed.push(q);
+          console.log('Added question:', q); // Debug log
+        }
       }
       
-      if (!qMatch || i >= lines.length) break;
+      // Reset for next question
+      currentQuestion = { options: {} };
+    };
 
-      let questionText = qMatch[1].trim();
-      const optionMap: Record<string, string> = {};
-      let correctLetter: string | null = null;
-
-      i++;
-
-      // Collect options and answer
-      let optionsCollected = 0;
-      for (; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Stop if we encounter another question
-        if (questionRegex.test(line)) {
-          i--; // Step back to process this as the next question
-          break;
+    // Process each line
+    const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Check if this is a new question
+      const qMatch = line.match(questionRegex);
+      if (qMatch) {
+        // Finalize previous question if exists
+        if (currentQuestion.questionText) {
+          finalizeQuestion();
         }
-
-        // Check for answer
-        const aMatch = line.match(answerRegex);
-        if (aMatch) {
-          correctLetter = aMatch[1].toUpperCase();
-          continue;
-        }
-
-        // Check for options
-        const oMatch = line.match(optionRegex);
-        if (oMatch) {
-          const letter = oMatch[1].toUpperCase();
-          const textPart = oMatch[2].trim();
-          optionMap[letter] = textPart;
-          optionsCollected++;
-        }
-      }
-
-      const letters = ['A', 'B', 'C', 'D'];
-      const options = letters
-        .map((l) => optionMap[l] || '')
-        .filter((o) => o.length > 0);
-
-      // Validate we have a complete question
-      if (!questionText || options.length < 2) {
-        console.warn('Incomplete question detected:', { questionText, options });
+        
+        currentQuestion.questionText = qMatch[1].trim();
+        currentQuestion.options = {};
         continue;
       }
 
-      const correctIndex =
-        correctLetter && letters.includes(correctLetter)
-          ? letters.indexOf(correctLetter)
-          : -1;
+      // Check for options
+      const oMatch = line.match(optionRegex);
+      if (oMatch && currentQuestion.questionText) {
+        const letter = oMatch[1].toUpperCase();
+        const text = oMatch[2].trim();
+        currentQuestion.options[letter] = text;
+        continue;
+      }
 
-      const answer =
-        correctIndex >= 0 && correctIndex < options.length
-          ? options[correctIndex]
-          : '';
+      // Check for answer
+      const aMatch = line.match(answerRegex);
+      if (aMatch && currentQuestion.questionText) {
+        currentQuestion.correctAnswer = aMatch[1].toUpperCase();
+        // Don't continue here, as we might have more content
+      }
 
-      const q: ExtendedQuestion = {
-        id: `pdf-${Date.now()}-${counter++}`,
-        // @ts-ignore
-        question: questionText,
-        // @ts-ignore
-        answer,
-        options,
-        type: 'mcq',
-        isBookmarked: false,
-        isSelected: true,
-        section: '',
-      };
-
-      questionsParsed.push(q);
-      i++;
+      // If we have a question and options, and encounter a new question number or end, finalize
+      if (currentQuestion.questionText && 
+          (i === lines.length - 1 || lines[i + 1]?.match(questionRegex))) {
+        finalizeQuestion();
+      }
     }
 
-    console.log('Parsed questions:', questionsParsed); // Debug log
+    // Finalize the last question
+    if (currentQuestion.questionText) {
+      finalizeQuestion();
+    }
+
+    console.log('Final parsed questions:', questionsParsed); // Debug log
     return questionsParsed;
   };
 
@@ -469,11 +485,9 @@ export default function CreateQuizPage() {
       if (parsedQuestions.length === 0) {
         // Show the raw text in console for debugging
         console.error('No questions detected in text:', text);
+        console.error('Try checking: Page breaks, Answer formatting, Option labels');
         toast.error(
-          `No questions detected. Check browser console for RAW PDF TEXT. Common issues:
-          • Missing "Answer: A/B/C/D" 
-          • Options not formatted as A. B. C. D.
-          • Questions not numbered 1. 2. 3.`
+          `No questions detected. Check browser console for detailed debugging info.`
         );
         return;
       }
