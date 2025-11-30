@@ -99,7 +99,6 @@ export default function CreateQuizPage() {
     total: number;
   } | null>(null);
 
-  // NEW: state for manual PDF importing
   const [manualPdfLoading, setManualPdfLoading] = useState(false);
 
   useEffect(() => {
@@ -322,230 +321,297 @@ export default function CreateQuizPage() {
     );
   };
 
-  // ---------- FIXED: PDF → MCQ PARSER FOR MANUAL SECTION ----------
+  // ---------- ROBUST PDF PARSER THAT HANDLES MULTIPLE FORMATS ----------
 
   /**
-   * Parse text with pattern:
-   * 1. Question text...
-   * A. option 1
-   * B. option 2
-   * C. option 3
-   * D. option 4
-   * Answer: A
+   * Universal PDF parser that handles:
+   * - Multi-page PDFs with content split across pages
+   * - Compressed text (everything on one line)
+   * - Properly formatted text with line breaks
+   * - Various answer formats (Answer: A, Answer - A, ANSWER: A)
+   * - Different option formats (A. Option, A) Option, A Option)
    */
-  // ---------- FIXED: PDF → MCQ PARSER FOR MANUAL SECTION ----------
+  const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
+    console.log('=== PDF PARSER STARTED ===');
+    console.log('RAW PDF TEXT:', text);
 
-/**
- * Parse text with pattern:
- * 1. Question text... A. option 1 B. option 2 C. option 3 D. option 4 Answer: A
- */
-// ---------- SIMPLIFIED AND WORKING PDF PARSER ----------
+    // Step 1: Comprehensive text normalization
+    const normalizedText = text
+      // Remove page markers and headers
+      .replace(/===== Page \d+ =====/gi, '')
+      .replace(/Page \d+/gi, '')
+      .replace(/\f/g, '') // Remove form feeds (page breaks)
+      // Normalize line endings and whitespace
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n\s*\n/g, '\n\n')
+      .replace(/[ \t]+/g, ' ')
+      // Normalize answer formats
+      .replace(/Answer\s*[:\-]\s*/gi, 'Answer: ')
+      // Normalize option formats
+      .replace(/([A-D])[\)\.]\s*/g, '$1. ')
+      .trim();
 
-/**
- * Parse text with pattern:
- * 1. Question text... A. option 1 B. option 2 C. option 3 D. option 4 Answer: A
- */
-const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
-  console.log('RAW PDF TEXT:', text);
+    console.log('NORMALIZED TEXT:', normalizedText);
 
-  // Normalize the text
-  const normalizedText = text
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\n+/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-
-  console.log('Normalized text:', normalizedText);
-
-  const questionsParsed: ExtendedQuestion[] = [];
-  
-  // Simple and effective approach - split by question numbers
-  const questionParts = normalizedText.split(/(?=\d+\.)/).filter(part => part.trim());
-  
-  console.log('Question parts:', questionParts);
-
-  questionParts.forEach((part, index) => {
-    console.log(`Processing part ${index + 1}:`, part);
+    const questionsParsed: ExtendedQuestion[] = [];
+    const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
     
-    // Extract question number and text
-    const questionMatch = part.match(/^\d+\.\s*(.+?)(?=\s*(?:[A-D]\.|Answer:))/);
-    if (!questionMatch) {
-      console.log('No question match found');
-      return;
+    console.log('LINES TO PROCESS:', lines.length);
+
+    let currentQuestion: {
+      id?: string;
+      questionText?: string;
+      options: Record<string, string>;
+      correctAnswer?: string;
+      lineNumber?: number;
+    } = { options: {}, lineNumber: 0 };
+
+    const finalizeQuestion = () => {
+      if (currentQuestion.questionText && Object.keys(currentQuestion.options).length >= 2) {
+        const letters = ['A', 'B', 'C', 'D'];
+        const options = letters
+          .map((l) => currentQuestion.options[l] || '')
+          .filter((o) => o.length > 0);
+
+        if (options.length >= 2 && currentQuestion.questionText.length > 5) {
+          const correctIndex = currentQuestion.correctAnswer 
+            ? letters.indexOf(currentQuestion.correctAnswer.toUpperCase())
+            : -1;
+
+          const answer = correctIndex >= 0 && correctIndex < options.length
+            ? options[correctIndex]
+            : '';
+
+          const q: ExtendedQuestion = {
+            id: `pdf-${Date.now()}-${questionsParsed.length}`,
+            // @ts-ignore
+            question: currentQuestion.questionText,
+            // @ts-ignore
+            answer,
+            options,
+            type: 'mcq',
+            isBookmarked: false,
+            isSelected: true,
+            section: '',
+          };
+
+          questionsParsed.push(q);
+          console.log(`✅ ADDED QUESTION: "${currentQuestion.questionText.substring(0, 50)}..."`);
+        } else {
+          console.log(`❌ SKIPPED QUESTION - Insufficient data:`, {
+            question: currentQuestion.questionText,
+            options: Object.keys(currentQuestion.options).length,
+            optionCount: options.length
+          });
+        }
+      }
+      
+      // Reset for next question
+      currentQuestion = { options: {}, lineNumber: currentQuestion.lineNumber };
+    };
+
+    // Process each line with state machine approach
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      currentQuestion.lineNumber = i;
+
+      // Check for new question (supports: 1. Question, 1) Question, 1 Question)
+      const questionMatch = line.match(/^(\d+)[\.\)]?\s+(.+)$/);
+      if (questionMatch) {
+        // Finalize previous question if exists
+        if (currentQuestion.questionText) {
+          finalizeQuestion();
+        }
+        
+        currentQuestion.questionText = questionMatch[2].trim();
+        currentQuestion.options = {};
+        currentQuestion.correctAnswer = undefined;
+        console.log(`📝 NEW QUESTION: "${currentQuestion.questionText.substring(0, 50)}..."`);
+        continue;
+      }
+
+      // Check for options (supports: A. Option, A) Option, A Option)
+      const optionMatch = line.match(/^([A-D])[\.\)]?\s+(.+)$/i);
+      if (optionMatch && currentQuestion.questionText) {
+        const letter = optionMatch[1].toUpperCase();
+        const text = optionMatch[2].trim();
+        
+        // Only add if we don't already have this option
+        if (!currentQuestion.options[letter]) {
+          currentQuestion.options[letter] = text;
+          console.log(`   📋 OPTION ${letter}: ${text}`);
+        }
+        continue;
+      }
+
+      // Check for answer (supports: Answer: A, Answer - A, ANSWER: A)
+      const answerMatch = line.match(/^Answer:\s*([A-D])/i);
+      if (answerMatch && currentQuestion.questionText) {
+        currentQuestion.correctAnswer = answerMatch[1].toUpperCase();
+        console.log(`   ✅ ANSWER: ${currentQuestion.correctAnswer}`);
+        continue;
+      }
+
+      // Handle compressed format where multiple elements are in one line
+      if (currentQuestion.questionText && line.includes('A.') && line.includes('B.') && line.includes('C.')) {
+        console.log(`   🔍 COMPRESSED LINE DETECTED: ${line}`);
+        
+        // Extract options from compressed line
+        const compressedOptions = line.match(/([A-D])\.\s*([^A-D\.]*)(?=\s*(?:[A-D]\.|Answer:|$))/g);
+        if (compressedOptions) {
+          compressedOptions.forEach(opt => {
+            const optMatch = opt.match(/([A-D])\.\s*(.+)/);
+            if (optMatch && !currentQuestion.options[optMatch[1].toUpperCase()]) {
+              currentQuestion.options[optMatch[1].toUpperCase()] = optMatch[2].trim();
+            }
+          });
+        }
+
+        // Extract answer from compressed line
+        const compressedAnswer = line.match(/Answer:\s*([A-D])/i);
+        if (compressedAnswer && !currentQuestion.correctAnswer) {
+          currentQuestion.correctAnswer = compressedAnswer[1].toUpperCase();
+        }
+      }
+
+      // If we encounter a new question number in the middle of processing, finalize current
+      const nextLineQuestion = i < lines.length - 1 ? lines[i + 1].match(/^\d+[\.\)]?\s+/) : false;
+      if (nextLineQuestion && currentQuestion.questionText && Object.keys(currentQuestion.options).length >= 2) {
+        console.log(`   ⏩ NEXT QUESTION DETECTED, FINALIZING CURRENT`);
+        finalizeQuestion();
+      }
     }
-    
-    const questionText = questionMatch[1].trim();
-    console.log('Found question:', questionText);
 
-    // Extract options A, B, C, D
-    const options: Record<string, string> = {};
-    const letters = ['A', 'B', 'C', 'D'];
+    // Finalize the last question
+    if (currentQuestion.questionText) {
+      finalizeQuestion();
+    }
+
+    console.log('=== PDF PARSER COMPLETED ===');
+    console.log(`FOUND ${questionsParsed.length} QUESTIONS:`, questionsParsed);
+    return questionsParsed;
+  };
+
+  // Alternative parser for edge cases
+  const parseCompressedTextFormat = (text: string): ExtendedQuestion[] => {
+    console.log('🔄 USING ALTERNATIVE PARSER FOR COMPRESSED TEXT');
     
-    letters.forEach(letter => {
-      const optionRegex = new RegExp(`${letter}\\.\\s*([^A-D]*?)(?=(?:[A-D]\\.|Answer:|$))`);
-      const optionMatch = part.match(optionRegex);
-      if (optionMatch && optionMatch[1]) {
-        options[letter] = optionMatch[1].trim();
-        console.log(`Found option ${letter}:`, options[letter]);
+    const questionsParsed: ExtendedQuestion[] = [];
+    
+    // Handle fully compressed text (everything in one block)
+    const questionBlocks = text.split(/(?=\d+[\.\)]?\s+)/).filter(block => block.trim());
+    
+    questionBlocks.forEach((block, index) => {
+      console.log(`Processing compressed block ${index + 1}:`, block.substring(0, 100) + '...');
+      
+      // Extract question
+      const questionMatch = block.match(/^\d+[\.\)]?\s*([^A-D]*?)(?=[A-D][\.\)]|Answer:|$)/);
+      if (!questionMatch) return;
+      
+      const questionText = questionMatch[1].trim();
+      
+      // Extract all options
+      const options: Record<string, string> = {};
+      const optionRegex = /([A-D])[\.\)]?\s*([^A-D]*?)(?=(?:[A-D][\.\)]|Answer:|$))/g;
+      let optionMatch;
+      
+      while ((optionMatch = optionRegex.exec(block)) !== null) {
+        const letter = optionMatch[1].toUpperCase();
+        const text = optionMatch[2].trim();
+        if (text && !options[letter]) {
+          options[letter] = text;
+        }
+      }
+      
+      // Extract answer
+      const answerMatch = block.match(/Answer:\s*([A-D])/gi);
+      const correctAnswer = answerMatch ? answerMatch[0].match(/[A-D]/i)?.[0].toUpperCase() : '';
+      
+      // Create question if valid
+      if (questionText && Object.keys(options).length >= 2) {
+        const letters = ['A', 'B', 'C', 'D'];
+        const optionArray = letters.map(l => options[l] || '').filter(o => o.length > 0);
+        
+        if (optionArray.length >= 2) {
+          const correctIndex = correctAnswer ? letters.indexOf(correctAnswer) : -1;
+          const answer = correctIndex >= 0 ? optionArray[correctIndex] : '';
+          
+          const q: ExtendedQuestion = {
+            id: `pdf-compressed-${Date.now()}-${index}`,
+            // @ts-ignore
+            question: questionText,
+            // @ts-ignore
+            answer,
+            options: optionArray,
+            type: 'mcq',
+            isBookmarked: false,
+            isSelected: true,
+            section: '',
+          };
+          
+          questionsParsed.push(q);
+        }
       }
     });
-
-    // Extract answer
-    const answerMatch = part.match(/Answer:\s*([A-D])/i);
-    const correctAnswer = answerMatch ? answerMatch[1].toUpperCase() : '';
-    console.log('Found answer:', correctAnswer);
-
-    // Validate and create question
-    if (questionText && Object.keys(options).length >= 2) {
-      const optionArray = letters.map(l => options[l] || '').filter(o => o.length > 0);
-      
-      if (optionArray.length >= 2) {
-        const correctIndex = correctAnswer ? letters.indexOf(correctAnswer) : -1;
-        const answer = correctIndex >= 0 ? optionArray[correctIndex] : '';
-        
-        const q: ExtendedQuestion = {
-          id: `pdf-${Date.now()}-${index}`,
-          // @ts-ignore
-          question: questionText,
-          // @ts-ignore
-          answer,
-          options: optionArray,
-          type: 'mcq',
-          isBookmarked: false,
-          isSelected: true,
-          section: '',
-        };
-        
-        questionsParsed.push(q);
-        console.log('Added question:', q);
-      }
-    }
-  });
-
-  console.log('Final parsed questions:', questionsParsed);
-  return questionsParsed;
-};
-
-// Alternative parser for different text formats
-const parseCompressedTextFormat = (text: string): ExtendedQuestion[] => {
-  console.log('Trying alternative parser...');
-  
-  // This is a simpler approach that works with various formats
-  const questionsParsed: ExtendedQuestion[] = [];
-  const lines = text.split(/\n/).filter(line => line.trim());
-  
-  let currentQuestion: any = null;
-  
-  lines.forEach(line => {
-    line = line.trim();
     
-    // Check for new question
-    const questionMatch = line.match(/^(\d+)\.\s*(.+)/);
-    if (questionMatch) {
-      // Save previous question if exists
-      if (currentQuestion && currentQuestion.question && currentQuestion.options.length >= 2) {
-        questionsParsed.push(currentQuestion);
-      }
-      
-      // Start new question
-      currentQuestion = {
-        id: `pdf-alt-${Date.now()}-${questionsParsed.length}`,
-        question: questionMatch[2].trim(),
-        options: [],
-        answer: '',
-        type: 'mcq',
-        isBookmarked: false,
-        isSelected: true,
-        section: '',
-      };
-      return;
-    }
-    
-    // Check for options
-    const optionMatch = line.match(/^([A-D])\.\s*(.+)/i);
-    if (optionMatch && currentQuestion) {
-      const letter = optionMatch[1].toUpperCase();
-      const text = optionMatch[2].trim();
-      
-      // Ensure we have slots for all options
-      while (currentQuestion.options.length < ['A','B','C','D'].indexOf(letter)) {
-        currentQuestion.options.push('');
-      }
-      
-      currentQuestion.options.push(text);
-      return;
-    }
-    
-    // Check for answer
-    const answerMatch = line.match(/Answer:\s*([A-D])/i);
-    if (answerMatch && currentQuestion) {
-      const correctLetter = answerMatch[1].toUpperCase();
-      const correctIndex = ['A','B','C','D'].indexOf(correctLetter);
-      
-      if (correctIndex >= 0 && correctIndex < currentQuestion.options.length) {
-        currentQuestion.answer = currentQuestion.options[correctIndex];
-      }
-    }
-  });
-  
-  // Don't forget the last question
-  if (currentQuestion && currentQuestion.question && currentQuestion.options.length >= 2) {
-    questionsParsed.push(currentQuestion);
-  }
-  
-  return questionsParsed;
-};
+    return questionsParsed;
+  };
 
-const handleManualPdfUpload = async (
-  e: React.ChangeEvent<HTMLInputElement>
-) => {
-  const files = e.target.files;
-  if (!files || files.length === 0) return;
+  const handleManualPdfUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-  const file = files[0];
+    const file = files[0];
 
-  if (!isPDFFile(file)) {
-    toast.error('Please upload a PDF file with questions.');
-    return;
-  }
-
-  try {
-    setManualPdfLoading(true);
-    toast.info(`Reading questions from ${file.name}...`);
-
-    const text = await extractTextFromPDF(file);
-    console.log('Extracted PDF text:', text);
-    
-    let parsedQuestions = parseQuestionsFromPdfText(text);
-
-    // If main parser fails, try alternative
-    if (parsedQuestions.length === 0) {
-      console.log('Main parser failed, trying alternative...');
-      parsedQuestions = parseCompressedTextFormat(text);
-    }
-
-    if (parsedQuestions.length === 0) {
-      console.error('No questions detected after trying both parsers');
-      console.error('Text content:', text);
-      toast.error(
-        `Could not parse questions from PDF. The format may not be supported. Check console for details.`
-      );
+    if (!isPDFFile(file)) {
+      toast.error('Please upload a PDF file with questions.');
       return;
     }
 
-    setQuestions((prev) => [...prev, ...parsedQuestions]);
-    setCurrentQuizId(null);
+    try {
+      setManualPdfLoading(true);
+      toast.info(`Reading questions from ${file.name}...`);
 
-    toast.success(`Imported ${parsedQuestions.length} question(s) from PDF`);
-  } catch (err) {
-    console.error('Error importing questions from PDF:', err);
-    toast.error('Failed to extract questions from PDF.');
-  } finally {
-    setManualPdfLoading(false);
-    if (e.target) e.target.value = '';
-  }
-};
+      const text = await extractTextFromPDF(file);
+      console.log('=== PDF EXTRACTION COMPLETE ===');
+      console.log('EXTRACTED TEXT LENGTH:', text.length);
+      
+      let parsedQuestions = parseQuestionsFromPdfText(text);
+
+      // If main parser finds nothing, try alternative approach
+      if (parsedQuestions.length === 0) {
+        console.log('🔄 Main parser found 0 questions, trying alternative parser...');
+        parsedQuestions = parseCompressedTextFormat(text);
+      }
+
+      if (parsedQuestions.length === 0) {
+        console.error('❌ ALL PARSERS FAILED - No questions detected');
+        console.error('TEXT CONTENT FOR DEBUGGING:', text);
+        toast.error(
+          `Could not detect any questions in the PDF. Please check:
+          • Questions are numbered (1., 2., etc.)
+          • Options use A., B., C., D.
+          • Answers use "Answer: A" format
+          Check browser console for detailed analysis.`
+        );
+        return;
+      }
+
+      setQuestions((prev) => [...prev, ...parsedQuestions]);
+      setCurrentQuizId(null);
+
+      toast.success(`✅ Imported ${parsedQuestions.length} question(s) from PDF`);
+    } catch (err) {
+      console.error('❌ Error importing questions from PDF:', err);
+      toast.error('Failed to extract questions from PDF. Please try another file.');
+    } finally {
+      setManualPdfLoading(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   // ---------------------------------------------------------------------
 
