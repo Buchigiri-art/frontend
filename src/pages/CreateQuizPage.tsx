@@ -99,6 +99,7 @@ export default function CreateQuizPage() {
     total: number;
   } | null>(null);
 
+  // NEW: state for manual PDF importing
   const [manualPdfLoading, setManualPdfLoading] = useState(false);
 
   useEffect(() => {
@@ -302,7 +303,7 @@ export default function CreateQuizPage() {
     id: `manual-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`,
-    // @ts-ignore
+    // @ts-ignore (depends on your Question type)
     question: '',
     // @ts-ignore
     answer: '',
@@ -321,137 +322,91 @@ export default function CreateQuizPage() {
     );
   };
 
-  // ---------- NEW: SIMPLE LINE-BASED PDF PARSER (fits your pattern) ----------
+  // ---------- NEW: PDF → MCQ PARSER FOR MANUAL SECTION (Option A format) ----------
 
+  /**
+   * Parse text with pattern:
+   * 1. Question text...
+   * A. option 1
+   * B. option 2
+   * C. option 3
+   * D. option 4
+   * Answer: A
+   */
   const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
-    const normalized = text.replace(/\r\n/g, '\n');
-
-    const rawLines = normalized
-      .split('\n')
+    const lines = text
+      .split(/\r?\n/)
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const questionStartRegex = /^(\d+)\.\s*(.+)/; // 1. Question text
-    const answerLineRegex =
-      /^(?:ans(?:wer)?|key)\s*[:\-]?\s*([A-Da-d1-4])\s*$/i;
-
-    // Single option line like "A. Oxygen"
-    const singleOptionStartRegex = /^([A-Da-d])[\.\)]\s+(.+)/;
-
-    // Multiple options in one line like "A. 6   B. 7   C. 8   D. 9"
-    const multiOptionRegex =
-      /([A-Da-d])[\.\)]\s*([^A-Da-d]+?(?=(?:[A-Da-d][\.\)]|$)))/g;
-
-    const results: ExtendedQuestion[] = [];
+    const questionsParsed: ExtendedQuestion[] = [];
     let i = 0;
     let counter = 0;
 
-    const makeId = () => `pdf-${Date.now()}-${counter++}`;
+    const questionRegex = /^\d+\.\s+(.+)/; // 1. Question...
+    const optionRegex = /^([A-D])[)\.]\s*(.+)/i; // A. / A) text
+    const answerRegex = /^answer\s*[:\-]\s*([A-D])/i;
 
-    while (i < rawLines.length) {
-      const qMatch = rawLines[i].match(questionStartRegex);
+    while (i < lines.length) {
+      const qMatch = lines[i].match(questionRegex);
       if (!qMatch) {
         i++;
         continue;
       }
 
-      let questionText = qMatch[2].trim();
+      let questionText = qMatch[1].trim();
       const optionMap: Record<string, string> = {};
-      let answerMarker: string | null = null;
+      let correctLetter: string | null = null;
 
       i++;
 
-      while (i < rawLines.length && !questionStartRegex.test(rawLines[i])) {
-        const line = rawLines[i];
+      // Read options + answer
+      for (; i < lines.length; i++) {
+        const line = lines[i];
 
-        // 1) Answer line
-        const aMatch = line.match(answerLineRegex);
+        // Next question encountered -> step back one and break
+        if (questionRegex.test(line)) {
+          i--; // let outer while handle this as new question
+          break;
+        }
+
+        const aMatch = line.match(answerRegex);
         if (aMatch) {
-          answerMarker = aMatch[1].toUpperCase();
-          i++;
+          correctLetter = aMatch[1].toUpperCase();
           continue;
         }
 
-        // 2) Options (side-by-side or inline) in the same line
-        let foundAnyOption = false;
-        let m: RegExpExecArray | null;
-        while ((m = multiOptionRegex.exec(line)) !== null) {
-          foundAnyOption = true;
-          const label = m[1].toUpperCase();
-          const textPart = m[2].trim();
-          if (textPart) {
-            optionMap[label] = textPart;
-          }
+        const oMatch = line.match(optionRegex);
+        if (oMatch) {
+          const letter = oMatch[1].toUpperCase();
+          const textPart = oMatch[2].trim();
+          optionMap[letter] = textPart;
         }
-
-        // 3) If no inline options were detected, check for simple line-based option
-        if (!foundAnyOption) {
-          const soMatch = line.match(singleOptionStartRegex);
-          if (soMatch) {
-            const label = soMatch[1].toUpperCase();
-            const textPart = soMatch[2].trim();
-            if (textPart) {
-              optionMap[label] = textPart;
-            }
-          } else {
-            // 4) Otherwise, treat this as continuation of question text (multi-line questions)
-            if (
-              !/^answer/i.test(line) &&
-              !/^[A-D][\.\)]/.test(line)
-            ) {
-              questionText += ' ' + line;
-            }
-          }
-        }
-
-        i++;
       }
 
-      // Build final ordered options A,B,C,D
-      const orderedLabels = ['A', 'B', 'C', 'D'];
-      const options: string[] = [];
+      const letters = ['A', 'B', 'C', 'D'];
+      const options = letters
+        .map((l) => optionMap[l])
+        .filter((o) => typeof o === 'string' && o.length > 0);
 
-      orderedLabels.forEach((label) => {
-        if (optionMap[label]) {
-          options.push(optionMap[label]);
-        }
-      });
-
-      // If any weird labels slipped in, append them too
-      Object.keys(optionMap).forEach((label) => {
-        const up = label.toUpperCase();
-        if (!orderedLabels.includes(up) && optionMap[label]) {
-          options.push(optionMap[label]);
-        }
-      });
-
-      if (options.length === 0) {
-        // no options, skip this block
+      if (!questionText || options.length === 0) {
         continue;
       }
 
-      // Determine correct answer index from marker (default = first option)
-      let answerIndex = 0;
-      if (answerMarker) {
-        if (/[A-D]/.test(answerMarker)) {
-          const idx = orderedLabels.indexOf(answerMarker);
-          if (idx >= 0 && idx < options.length) {
-            answerIndex = idx;
-          }
-        } else if (/[1-4]/.test(answerMarker)) {
-          const n = parseInt(answerMarker, 10) - 1;
-          if (n >= 0 && n < options.length) {
-            answerIndex = n;
-          }
-        }
-      }
+      const correctIndex =
+        correctLetter && letters.includes(correctLetter)
+          ? letters.indexOf(correctLetter)
+          : -1;
 
-      const answer = options[answerIndex];
+      const answer =
+        correctIndex >= 0 && correctIndex < options.length
+          ? options[correctIndex]
+          : '';
 
       const q: ExtendedQuestion = {
-        id: makeId(),
+        id: `pdf-${Date.now()}-${counter++}`,
         // @ts-ignore
-        question: questionText.trim(),
+        question: questionText,
         // @ts-ignore
         answer,
         options,
@@ -461,10 +416,11 @@ export default function CreateQuizPage() {
         section: '',
       };
 
-      results.push(q);
+      questionsParsed.push(q);
+      i++;
     }
 
-    return results;
+    return questionsParsed;
   };
 
   const handleManualPdfUpload = async (
@@ -483,7 +439,7 @@ export default function CreateQuizPage() {
     try {
       setManualPdfLoading(true);
       toast.info(
-        `Reading questions from ${file.name} (detecting numbered MCQs)...`
+        `Reading questions from ${file.name} (Option A format)...`
       );
 
       const text = await extractTextFromPDF(file);
@@ -491,7 +447,7 @@ export default function CreateQuizPage() {
 
       if (parsedQuestions.length === 0) {
         toast.error(
-          'No valid questions detected. Make sure questions look like "1. Question... A. ... B. ... C. ... D. ... Answer: C".'
+          'No questions detected. Check that your PDF uses the pattern "1. Question... A. ... B. ... C. ... D. ... Answer: A".'
         );
         return;
       }
@@ -663,11 +619,13 @@ export default function CreateQuizPage() {
     setShareProgress(null);
 
     try {
+      // Ensure quiz is saved (create or update)
       let quizId = currentQuizId;
       if (!quizId) {
         quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       }
 
+      // Resolve selected student IDs to emails
       let studentEmails = (selectedStudents || [])
         .map((s) => {
           if (typeof s === 'string' && s.includes('@'))
@@ -678,7 +636,9 @@ export default function CreateQuizPage() {
             if (parsed && typeof parsed === 'object' && parsed.email) {
               return String(parsed.email).trim();
             }
-          } catch {}
+          } catch {
+            // ignore
+          }
 
           const found = students.find(
             (st) =>
@@ -713,17 +673,14 @@ export default function CreateQuizPage() {
           total,
         });
 
-        const sharePayload: any = {
+        const sharePayload: QuizShare = {
           quizId,
           studentEmails: batchEmails,
           links: [],
           forceResend: true,
-          allowMultipleAttempts: true,
         };
 
-        const result: any = await quizAPI.share(
-          sharePayload as QuizShare
-        );
+        const result: any = await quizAPI.share(sharePayload);
         const linksFromResult = Array.isArray(result.links)
           ? result.links
           : [];
@@ -740,6 +697,9 @@ export default function CreateQuizPage() {
       if (allLinks.length === 0) {
         toast(
           'Share completed but no links were returned. Check server response in console/network.'
+        );
+        console.warn(
+          'Share result had no links. Check backend /quiz/share response.'
         );
       } else {
         toast.success(
@@ -759,6 +719,7 @@ export default function CreateQuizPage() {
 
       if (err?.response?.data) {
         const data = err.response.data;
+        console.error('Server response:', data);
         const serverMsg =
           data?.message ||
           (Array.isArray(data?.failedValidation) &&
@@ -1089,10 +1050,11 @@ export default function CreateQuizPage() {
               </CardTitle>
               <CardDescription className="text-xs md:text-sm">
                 Add your own questions without using AI, or import
-                existing question papers (PDF) with 1., A–D, Answer.
+                existing question papers (PDF – Option A pattern).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Manual add buttons */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   type="button"
@@ -1114,25 +1076,28 @@ export default function CreateQuizPage() {
                 </Button>
               </div>
 
+              {/* PDF import (Option A) */}
               <div className="pt-2 border-t mt-2 space-y-2">
                 <Label className="text-xs md:text-sm font-medium flex items-center gap-2">
                   <FileScan className="h-4 w-4 text-primary" />
-                  Import Questions from PDF
+                  Import Questions from PDF (Option A Format)
                 </Label>
                 <p className="text-[11px] md:text-xs text-muted-foreground">
-                  Pattern supported:
+                  Expected pattern inside PDF:
                   <br />
-                  1. Question text...
-                  <br />
-                  A. Option 1
-                  <br />
-                  B. Option 2
-                  <br />
-                  C. Option 3
-                  <br />
-                  D. Option 4
-                  <br />
-                  Answer: C
+                  <code className="font-mono">
+                    1. Question text...
+                    <br />
+                    A. Option 1
+                    <br />
+                    B. Option 2
+                    <br />
+                    C. Option 3
+                    <br />
+                    D. Option 4
+                    <br />
+                    Answer: A
+                  </code>
                 </p>
                 <label className="mt-1 flex items-center justify-center w-full h-20 md:h-24 border border-dashed border-border rounded-lg hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group">
                   <div className="text-center p-2">
@@ -1315,6 +1280,7 @@ export default function CreateQuizPage() {
                       <DialogDescription>
                         Select students to share this quiz with. Unique
                         links will be generated and sent to their email.
+                        Delivery time depends on your email provider.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="mt-4 space-y-4">
@@ -1360,6 +1326,8 @@ export default function CreateQuizPage() {
             <DialogTitle>Generated Quiz Links</DialogTitle>
             <DialogDescription>
               Copy or download links for distribution to your students.
+              Email delivery can still be delayed by your mail provider;
+              you can send these links manually if needed.
             </DialogDescription>
           </DialogHeader>
 
