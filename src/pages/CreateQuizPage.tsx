@@ -99,7 +99,6 @@ export default function CreateQuizPage() {
     total: number;
   } | null>(null);
 
-  // NEW: state for manual PDF importing
   const [manualPdfLoading, setManualPdfLoading] = useState(false);
 
   useEffect(() => {
@@ -322,86 +321,12 @@ export default function CreateQuizPage() {
     );
   };
 
-  // ---------- FLEXIBLE PDF → MCQ PARSER (many questions, loose pattern) ----------
+  // ---------- PDF → MCQ PARSER (supports inline blocks like your example) ----------
 
-  /**
-   * Heuristic parser:
-   * - Detects question starts:
-   *   - "1. Question...", "2) Question..."
-   *   - "Q1: Question...", "Question 2 - ..."
-   *   - or lines ending with "?"
-   * - Within each question block (until next question):
-   *   - Finds options "A. ...", "B) ...", "1. ..." etc. (line-based or inline)
-   *   - Finds answer lines like "Ans: C", "Answer - 2", "Key: B"
-   *
-   * NOT perfect, but supports many real-world patterns if:
-   *   - Options are labeled A/B/C/D or 1/2/3/4
-   *   - Each question has some nearby "Answer"/"Ans" info
-   */
   const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
-    const rawLines = text.split(/\r?\n/);
-
-    const lines = rawLines
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-
-    if (lines.length === 0) return [];
-
-    const questionStartRegexes: RegExp[] = [
-      /^\s*(\d+)\s*[\.\)]\s+(.+)/, // 1. Question...
-      /^Q(?:uestion)?\s*(\d+)?\s*[\.\):\-]\s+(.+)/i, // Q1: Question...
-    ];
-
-    const optionLineRegex = /^\s*([A-Da-d]|[1-4])[\.\)]\s+(.+)/;
-    const answerLineRegex = /(ans(?:wer)?|key)\s*[:\-]?\s*([A-Da-d1-4])/i;
-
-    type LineType = 'question' | 'option' | 'answer' | 'other';
-
-    interface LineInfo {
-      index: number;
-      text: string;
-      type: LineType;
-      qNumber?: number;
-    }
-
-    const classifyLine = (line: string, index: number): LineInfo => {
-      // Numbered / Q-based questions
-      for (const re of questionStartRegexes) {
-        const m = re.exec(line);
-        if (m) {
-          const num = m[1] ? parseInt(m[1], 10) : undefined;
-          return { index, text: line, type: 'question', qNumber: num };
-        }
-      }
-
-      // Options
-      if (optionLineRegex.test(line)) {
-        return { index, text: line, type: 'option' };
-      }
-
-      // Answers
-      if (answerLineRegex.test(line)) {
-        return { index, text: line, type: 'answer' };
-      }
-
-      // Fallback: line ending with ? looks like a question
-      if (line.endsWith('?') && line.length > 10) {
-        return { index, text: line, type: 'question' };
-      }
-
-      return { index, text: line, type: 'other' };
-    };
-
-    const info: LineInfo[] = lines.map((t, idx) => classifyLine(t, idx));
-
-    const questionInfos = info.filter((li) => li.type === 'question');
-
-    if (questionInfos.length === 0) {
-      return [];
-    }
-
     const results: ExtendedQuestion[] = [];
     let counter = 0;
+    const makeId = () => `pdf-${Date.now()}-${counter++}`;
 
     const buildQuestion = (
       questionText: string,
@@ -410,19 +335,16 @@ export default function CreateQuizPage() {
     ): ExtendedQuestion | null => {
       questionText = (questionText || '').trim();
       options = (options || []).map((o) => o.trim()).filter(Boolean);
-
-      if (!questionText || options.length < 2) return null; // at least 2 options
+      if (!questionText || options.length < 2) return null;
       if (answerIndex < 0 || answerIndex >= options.length) {
         answerIndex = 0;
       }
-
       const normalizedOptions =
         options.length >= 4 ? options.slice(0, 4) : options;
-
       const answer = normalizedOptions[answerIndex];
 
-      const q: ExtendedQuestion = {
-        id: `pdf-${Date.now()}-${counter++}`,
+      return {
+        id: makeId(),
         // @ts-ignore
         question: questionText,
         // @ts-ignore
@@ -433,9 +355,164 @@ export default function CreateQuizPage() {
         isSelected: true,
         section: '',
       };
-
-      return q;
     };
+
+    const normalizedText = text.replace(/\r\n/g, '\n');
+
+    // ===== PASS 1: INLINE NUMBERED BLOCKS =====
+    // Matches:
+    // "1. Question ? A. ... B. ... C. ... D. ... Answer: X"
+    // even if multiple questions are on one line.
+    const blockRegex = /(\d+\.\s[\s\S]*?)(?=(?:\n\s*\d+\.\s)|(?:\s\d+\.\s)|$)/g;
+    const blocks: string[] = [];
+    let bm: RegExpExecArray | null;
+    while ((bm = blockRegex.exec(normalizedText)) !== null) {
+      blocks.push(bm[1].trim());
+    }
+
+    const answerMarkerRegex =
+      /(?:ans(?:wer)?|key)\s*[:\-]?\s*([A-Da-d1-4])/i;
+
+    const inlineOptionRegex =
+      /([A-Da-d])[\.\)]\s*([^A-Da-d]+?)(?=(?:[A-Da-d][\.\)]\s)|(?:ans(?:wer)?|key)|$)/gi;
+
+    for (const rawBlock of blocks) {
+      let block = rawBlock.trim();
+      if (!block) continue;
+
+      // number prefix "1. "
+      const numMatch = block.match(/^\s*\d+\.\s*/);
+      let bodyStart = 0;
+      if (numMatch) {
+        bodyStart = numMatch[0].length;
+      }
+
+      const ansMatch = block.match(answerMarkerRegex);
+      if (!ansMatch) {
+        // no answer marker; skip this block
+        continue;
+      }
+
+      const ansIndexInBlock = ansMatch.index ?? block.length;
+      const answerMarker = ansMatch[1].toUpperCase();
+
+      const body = block.slice(bodyStart, ansIndexInBlock).trim();
+
+      // Find options A/B/C/D inside body (inline or stacked)
+      const options: string[] = [];
+      const labels: string[] = [];
+      let firstOptPos = -1;
+
+      let om: RegExpExecArray | null;
+      while ((om = inlineOptionRegex.exec(body)) !== null) {
+        if (firstOptPos === -1) {
+          firstOptPos = om.index;
+        }
+        const label = om[1].toUpperCase();
+        const textPart = om[2].trim();
+        if (!textPart) continue;
+        labels.push(label);
+        options.push(textPart);
+      }
+
+      if (options.length === 0) {
+        // maybe options are on separate lines with "A. ..." pattern
+        const lineOptions: string[] = [];
+        const lineLabels: string[] = [];
+        const lines = body.split('\n');
+        const lineOptRegex = /^\s*([A-Da-d]|[1-4])[\.\)]\s+(.+)/;
+        lines.forEach((ln) => {
+          const m = lineOptRegex.exec(ln.trim());
+          if (m) {
+            const lab = m[1].toUpperCase();
+            const tp = m[2].trim();
+            if (tp) {
+              lineLabels.push(lab);
+              lineOptions.push(tp);
+            }
+          }
+        });
+        if (lineOptions.length > 0) {
+          options.push(...lineOptions);
+          labels.push(...lineLabels);
+          const idx = body.indexOf(lines[0]);
+          firstOptPos = idx >= 0 ? idx : 0;
+        }
+      }
+
+      if (options.length === 0) {
+        // no options found -> skip this block
+        continue;
+      }
+
+      // Question text: from body start to first option
+      let questionText = body;
+      if (firstOptPos > 0) {
+        questionText = body.slice(0, firstOptPos).trim();
+      }
+      if (!questionText) continue;
+
+      // Determine answer index from marker
+      let answerIndex = 0;
+      if (/[A-D]/.test(answerMarker)) {
+        const idx = labels.findIndex((lab) => lab === answerMarker);
+        if (idx >= 0) answerIndex = idx;
+      } else if (/[1-4]/.test(answerMarker)) {
+        const idx = parseInt(answerMarker, 10) - 1;
+        if (idx >= 0 && idx < options.length) answerIndex = idx;
+      }
+
+      const built = buildQuestion(questionText, options, answerIndex);
+      if (built) results.push(built);
+    }
+
+    if (results.length > 0) {
+      return results;
+    }
+
+    // ===== PASS 2: GENERIC LINE-BASED HEURISTIC (fallback) =====
+    const rawLines = normalizedText.split('\n');
+    const lines = rawLines
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) return [];
+
+    const questionStartRegexes: RegExp[] = [
+      /^\s*(\d+)\s*[\.\)]\s+(.+)/,
+      /^Q(?:uestion)?\s*(\d+)?\s*[\.\):\-]\s+(.+)/i,
+    ];
+    const optionLineRegex = /^\s*([A-Da-d]|[1-4])[\.\)]\s+(.+)/;
+    const answerLineRegex =
+      /(ans(?:wer)?|key)\s*[:\-]?\s*([A-Da-d1-4])/i;
+
+    type LineType = 'question' | 'option' | 'answer' | 'other';
+    interface LineInfo {
+      index: number;
+      text: string;
+      type: LineType;
+    }
+
+    const classifyLine = (line: string, index: number): LineInfo => {
+      for (const re of questionStartRegexes) {
+        if (re.test(line)) {
+          return { index, text: line, type: 'question' };
+        }
+      }
+      if (optionLineRegex.test(line)) {
+        return { index, text: line, type: 'option' };
+      }
+      if (answerLineRegex.test(line)) {
+        return { index, text: line, type: 'answer' };
+      }
+      if (line.endsWith('?') && line.length > 10) {
+        return { index, text: line, type: 'question' };
+      }
+      return { index, text: line, type: 'other' };
+    };
+
+    const info: LineInfo[] = lines.map((t, idx) => classifyLine(t, idx));
+    const questionInfos = info.filter((li) => li.type === 'question');
+    if (questionInfos.length === 0) return [];
 
     for (let qi = 0; qi < questionInfos.length; qi++) {
       const qLine = questionInfos[qi];
@@ -444,13 +521,9 @@ export default function CreateQuizPage() {
         qi + 1 < questionInfos.length
           ? questionInfos[qi + 1].index
           : lines.length;
-
       const segmentLines = lines.slice(start, end);
-      const segmentText = segmentLines.join('\n');
-
       if (segmentLines.length === 0) continue;
 
-      // Question text: first line without leading "1." or "Q1:" etc
       let questionText = segmentLines[0].replace(
         /^\s*(?:\d+|Q(?:uestion)?\s*\d*)[\.\):\-]\s*/i,
         ''
@@ -460,8 +533,6 @@ export default function CreateQuizPage() {
       }
 
       const options: string[] = [];
-
-      // 1) Line-based options (A., B., 1., etc.)
       for (let i = 1; i < segmentLines.length; i++) {
         const m = optionLineRegex.exec(segmentLines[i]);
         if (m) {
@@ -470,31 +541,8 @@ export default function CreateQuizPage() {
         }
       }
 
-      // 2) Inline options if not enough yet
-      if (options.length < 4) {
-        const body = segmentText
-          .split('\n')
-          .slice(1)
-          .join(' ');
-        const inlineOptRegex =
-          /([A-Da-d])[\.\)]\s*([^A-Da-d]+?)(?=(?:[A-Da-d][\.\)]\s)|$)/g;
-        let mm: RegExpExecArray | null;
-        const inlineOptions: string[] = [];
-        while ((mm = inlineOptRegex.exec(body)) !== null) {
-          const textPart = mm[2].trim();
-          if (textPart) inlineOptions.push(textPart);
-        }
-        for (const opt of inlineOptions) {
-          if (!options.includes(opt)) options.push(opt);
-        }
-      }
+      if (options.length === 0) continue;
 
-      if (options.length === 0) {
-        // No clear options; skip creating this as an MCQ
-        continue;
-      }
-
-      // 3) Find answer inside this block
       let answerIndex = 0;
       for (let i = 1; i < segmentLines.length; i++) {
         const m = answerLineRegex.exec(segmentLines[i]);
@@ -502,23 +550,17 @@ export default function CreateQuizPage() {
           const marker = m[2].toUpperCase();
           if (/[A-D]/.test(marker)) {
             const idx = marker.charCodeAt(0) - 'A'.charCodeAt(0);
-            if (idx >= 0 && idx < options.length) {
-              answerIndex = idx;
-            }
+            if (idx >= 0 && idx < options.length) answerIndex = idx;
           } else if (/[1-4]/.test(marker)) {
             const idx = parseInt(marker, 10) - 1;
-            if (idx >= 0 && idx < options.length) {
-              answerIndex = idx;
-            }
+            if (idx >= 0 && idx < options.length) answerIndex = idx;
           }
           break;
         }
       }
 
       const built = buildQuestion(questionText, options, answerIndex);
-      if (built) {
-        results.push(built);
-      }
+      if (built) results.push(built);
     }
 
     return results;
@@ -548,7 +590,7 @@ export default function CreateQuizPage() {
 
       if (parsedQuestions.length === 0) {
         toast.error(
-          'No valid questions detected. Please ensure questions are clearly labeled (e.g. "1." or end with "?"), options use A/B/C/D or 1–4, and answers contain "Ans" / "Answer" with a letter or number.'
+          'No valid questions detected. Please ensure questions are numbered or end with "?", options use A/B/C/D or 1–4, and each question has an "Answer" / "Ans" / "Key" line with the correct option.'
         );
         return;
       }
@@ -720,13 +762,11 @@ export default function CreateQuizPage() {
     setShareProgress(null);
 
     try {
-      // Ensure quiz is saved (create or update)
       let quizId = currentQuizId;
       if (!quizId) {
         quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       }
 
-      // Resolve selected student IDs to emails
       let studentEmails = (selectedStudents || [])
         .map((s) => {
           if (typeof s === 'string' && s.includes('@'))
@@ -737,9 +777,7 @@ export default function CreateQuizPage() {
             if (parsed && typeof parsed === 'object' && parsed.email) {
               return String(parsed.email).trim();
             }
-          } catch {
-            // ignore
-          }
+          } catch {}
 
           const found = students.find(
             (st) =>
@@ -774,13 +812,12 @@ export default function CreateQuizPage() {
           total,
         });
 
-        // allowMultipleAttempts: backend should allow re-attending the quiz
         const sharePayload: any = {
           quizId,
           studentEmails: batchEmails,
           links: [],
           forceResend: true,
-          allowMultipleAttempts: true,
+          allowMultipleAttempts: true, // so backend can let them re-attempt
         };
 
         const result: any = await quizAPI.share(
@@ -803,9 +840,6 @@ export default function CreateQuizPage() {
         toast(
           'Share completed but no links were returned. Check server response in console/network.'
         );
-        console.warn(
-          'Share result had no links. Check backend /quiz/share response.'
-        );
       } else {
         toast.success(
           `Quiz links generated for ${
@@ -824,7 +858,6 @@ export default function CreateQuizPage() {
 
       if (err?.response?.data) {
         const data = err.response.data;
-        console.error('Server response:', data);
         const serverMsg =
           data?.message ||
           (Array.isArray(data?.failedValidation) &&
@@ -1155,13 +1188,12 @@ export default function CreateQuizPage() {
               </CardTitle>
               <CardDescription className="text-xs md:text-sm">
                 Add your own questions without using AI, or import
-                existing question papers (PDF). Any pattern is okay as
-                long as questions, options, and answers are clearly
-                labeled.
+                existing question papers (PDF). Numbered, stacked, or
+                side-by-side options like{" "}
+                <code>A ... B ... C ... D ...</code> are supported.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Manual add buttons */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   type="button"
@@ -1183,22 +1215,18 @@ export default function CreateQuizPage() {
                 </Button>
               </div>
 
-              {/* PDF import (flexible) */}
               <div className="pt-2 border-t mt-2 space-y-2">
                 <Label className="text-xs md:text-sm font-medium flex items-center gap-2">
                   <FileScan className="h-4 w-4 text-primary" />
-                  Import Questions from PDF (Flexible Pattern)
+                  Import Questions from PDF
                 </Label>
                 <p className="text-[11px] md:text-xs text-muted-foreground">
-                  The system tries to detect:
+                  Works with patterns like:
                   <br />
-                  • Question lines (numbered, Q1/Q2..., or ending with "?")
+                  1. Question...? A. ... B. ... C. ... D. ... Answer: C
                   <br />
-                  • Options labeled A/B/C/D or 1–4 (either inline or one
-                  per line)
-                  <br />
-                  • Answer lines with "Ans", "Answer", or "Key" plus the
-                  correct option (e.g. "Ans: C")
+                  or each option on its own line. Answers can be on the
+                  same line or the next line.
                 </p>
                 <label className="mt-1 flex items-center justify-center w-full h-20 md:h-24 border border-dashed border-border rounded-lg hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group">
                   <div className="text-center p-2">
@@ -1448,7 +1476,7 @@ export default function CreateQuizPage() {
                       <div className="text-sm font-medium">
                         {l.email}
                       </div>
-                        <div className="text-xs truncate">
+                      <div className="text-xs truncate">
                         {l.link}
                       </div>
                     </li>
