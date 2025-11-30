@@ -333,179 +333,219 @@ export default function CreateQuizPage() {
    * D. option 4
    * Answer: A
    */
-  const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
-    console.log('RAW PDF TEXT:', text); // Debug log
+  // ---------- FIXED: PDF → MCQ PARSER FOR MANUAL SECTION ----------
 
-    // Normalize the text: handle page breaks, extra spaces, inconsistent newlines
-    const normalizedText = text
-      .replace(/===== Page \d+ =====/g, '') // Remove page markers
-      .replace(/\r\n/g, '\n') // Convert Windows line endings
-      .replace(/\r/g, '\n')   // Convert old Mac line endings
-      .replace(/\n\s*\n/g, '\n\n') // Normalize multiple newlines
-      .replace(/[ \t]+/g, ' ') // Normalize spaces
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .join('\n');
+/**
+ * Parse text with pattern:
+ * 1. Question text... A. option 1 B. option 2 C. option 3 D. option 4 Answer: A
+ */
+// ---------- SIMPLIFIED AND WORKING PDF PARSER ----------
 
-    console.log('Normalized text:', normalizedText); // Debug log
+/**
+ * Parse text with pattern:
+ * 1. Question text... A. option 1 B. option 2 C. option 3 D. option 4 Answer: A
+ */
+const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
+  console.log('RAW PDF TEXT:', text);
 
-    const questionsParsed: ExtendedQuestion[] = [];
+  // Normalize the text
+  const normalizedText = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+
+  console.log('Normalized text:', normalizedText);
+
+  const questionsParsed: ExtendedQuestion[] = [];
+  
+  // Simple and effective approach - split by question numbers
+  const questionParts = normalizedText.split(/(?=\d+\.)/).filter(part => part.trim());
+  
+  console.log('Question parts:', questionParts);
+
+  questionParts.forEach((part, index) => {
+    console.log(`Processing part ${index + 1}:`, part);
     
-    // More flexible regex patterns
-    const questionRegex = /^\d+[\.\)]\s*(.+)/; // 1. or 1) Question...
-    const optionRegex = /^([A-D])[\)\.]\s*(.+)/i; // A. or A) text
-    const answerRegex = /^answer\s*[:\-]\s*([A-D])/i; // Answer: A or Answer - A
-
-    // Split by double newlines to get potential question blocks
-    const blocks = normalizedText.split(/\n\s*\n/).filter(block => block.trim().length > 0);
+    // Extract question number and text
+    const questionMatch = part.match(/^\d+\.\s*(.+?)(?=\s*(?:[A-D]\.|Answer:))/);
+    if (!questionMatch) {
+      console.log('No question match found');
+      return;
+    }
     
-    console.log('Text blocks:', blocks); // Debug log
+    const questionText = questionMatch[1].trim();
+    console.log('Found question:', questionText);
 
-    let currentQuestion: {
-      id?: string;
-      questionText?: string;
-      options: Record<string, string>;
-      correctAnswer?: string;
-    } = { options: {} };
-
-    const finalizeQuestion = () => {
-      if (currentQuestion.questionText && Object.keys(currentQuestion.options).length >= 2) {
-        const letters = ['A', 'B', 'C', 'D'];
-        const options = letters
-          .map((l) => currentQuestion.options[l] || '')
-          .filter((o) => o.length > 0);
-
-        if (options.length >= 2) {
-          const correctIndex = currentQuestion.correctAnswer 
-            ? letters.indexOf(currentQuestion.correctAnswer.toUpperCase())
-            : -1;
-
-          const answer = correctIndex >= 0 && correctIndex < options.length
-            ? options[correctIndex]
-            : '';
-
-          const q: ExtendedQuestion = {
-            id: `pdf-${Date.now()}-${questionsParsed.length}`,
-            // @ts-ignore
-            question: currentQuestion.questionText,
-            // @ts-ignore
-            answer,
-            options,
-            type: 'mcq',
-            isBookmarked: false,
-            isSelected: true,
-            section: '',
-          };
-
-          questionsParsed.push(q);
-          console.log('Added question:', q); // Debug log
-        }
+    // Extract options A, B, C, D
+    const options: Record<string, string> = {};
+    const letters = ['A', 'B', 'C', 'D'];
+    
+    letters.forEach(letter => {
+      const optionRegex = new RegExp(`${letter}\\.\\s*([^A-D]*?)(?=(?:[A-D]\\.|Answer:|$))`);
+      const optionMatch = part.match(optionRegex);
+      if (optionMatch && optionMatch[1]) {
+        options[letter] = optionMatch[1].trim();
+        console.log(`Found option ${letter}:`, options[letter]);
       }
-      
-      // Reset for next question
-      currentQuestion = { options: {} };
-    };
+    });
 
-    // Process each line
-    const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    // Extract answer
+    const answerMatch = part.match(/Answer:\s*([A-D])/i);
+    const correctAnswer = answerMatch ? answerMatch[1].toUpperCase() : '';
+    console.log('Found answer:', correctAnswer);
+
+    // Validate and create question
+    if (questionText && Object.keys(options).length >= 2) {
+      const optionArray = letters.map(l => options[l] || '').filter(o => o.length > 0);
       
-      // Check if this is a new question
-      const qMatch = line.match(questionRegex);
-      if (qMatch) {
-        // Finalize previous question if exists
-        if (currentQuestion.questionText) {
-          finalizeQuestion();
-        }
+      if (optionArray.length >= 2) {
+        const correctIndex = correctAnswer ? letters.indexOf(correctAnswer) : -1;
+        const answer = correctIndex >= 0 ? optionArray[correctIndex] : '';
         
-        currentQuestion.questionText = qMatch[1].trim();
-        currentQuestion.options = {};
-        continue;
-      }
-
-      // Check for options
-      const oMatch = line.match(optionRegex);
-      if (oMatch && currentQuestion.questionText) {
-        const letter = oMatch[1].toUpperCase();
-        const text = oMatch[2].trim();
-        currentQuestion.options[letter] = text;
-        continue;
-      }
-
-      // Check for answer
-      const aMatch = line.match(answerRegex);
-      if (aMatch && currentQuestion.questionText) {
-        currentQuestion.correctAnswer = aMatch[1].toUpperCase();
-        // Don't continue here, as we might have more content
-      }
-
-      // If we have a question and options, and encounter a new question number or end, finalize
-      if (currentQuestion.questionText && 
-          (i === lines.length - 1 || lines[i + 1]?.match(questionRegex))) {
-        finalizeQuestion();
+        const q: ExtendedQuestion = {
+          id: `pdf-${Date.now()}-${index}`,
+          // @ts-ignore
+          question: questionText,
+          // @ts-ignore
+          answer,
+          options: optionArray,
+          type: 'mcq',
+          isBookmarked: false,
+          isSelected: true,
+          section: '',
+        };
+        
+        questionsParsed.push(q);
+        console.log('Added question:', q);
       }
     }
+  });
 
-    // Finalize the last question
-    if (currentQuestion.questionText) {
-      finalizeQuestion();
+  console.log('Final parsed questions:', questionsParsed);
+  return questionsParsed;
+};
+
+// Alternative parser for different text formats
+const parseCompressedTextFormat = (text: string): ExtendedQuestion[] => {
+  console.log('Trying alternative parser...');
+  
+  // This is a simpler approach that works with various formats
+  const questionsParsed: ExtendedQuestion[] = [];
+  const lines = text.split(/\n/).filter(line => line.trim());
+  
+  let currentQuestion: any = null;
+  
+  lines.forEach(line => {
+    line = line.trim();
+    
+    // Check for new question
+    const questionMatch = line.match(/^(\d+)\.\s*(.+)/);
+    if (questionMatch) {
+      // Save previous question if exists
+      if (currentQuestion && currentQuestion.question && currentQuestion.options.length >= 2) {
+        questionsParsed.push(currentQuestion);
+      }
+      
+      // Start new question
+      currentQuestion = {
+        id: `pdf-alt-${Date.now()}-${questionsParsed.length}`,
+        question: questionMatch[2].trim(),
+        options: [],
+        answer: '',
+        type: 'mcq',
+        isBookmarked: false,
+        isSelected: true,
+        section: '',
+      };
+      return;
+    }
+    
+    // Check for options
+    const optionMatch = line.match(/^([A-D])\.\s*(.+)/i);
+    if (optionMatch && currentQuestion) {
+      const letter = optionMatch[1].toUpperCase();
+      const text = optionMatch[2].trim();
+      
+      // Ensure we have slots for all options
+      while (currentQuestion.options.length < ['A','B','C','D'].indexOf(letter)) {
+        currentQuestion.options.push('');
+      }
+      
+      currentQuestion.options.push(text);
+      return;
+    }
+    
+    // Check for answer
+    const answerMatch = line.match(/Answer:\s*([A-D])/i);
+    if (answerMatch && currentQuestion) {
+      const correctLetter = answerMatch[1].toUpperCase();
+      const correctIndex = ['A','B','C','D'].indexOf(correctLetter);
+      
+      if (correctIndex >= 0 && correctIndex < currentQuestion.options.length) {
+        currentQuestion.answer = currentQuestion.options[correctIndex];
+      }
+    }
+  });
+  
+  // Don't forget the last question
+  if (currentQuestion && currentQuestion.question && currentQuestion.options.length >= 2) {
+    questionsParsed.push(currentQuestion);
+  }
+  
+  return questionsParsed;
+};
+
+const handleManualPdfUpload = async (
+  e: React.ChangeEvent<HTMLInputElement>
+) => {
+  const files = e.target.files;
+  if (!files || files.length === 0) return;
+
+  const file = files[0];
+
+  if (!isPDFFile(file)) {
+    toast.error('Please upload a PDF file with questions.');
+    return;
+  }
+
+  try {
+    setManualPdfLoading(true);
+    toast.info(`Reading questions from ${file.name}...`);
+
+    const text = await extractTextFromPDF(file);
+    console.log('Extracted PDF text:', text);
+    
+    let parsedQuestions = parseQuestionsFromPdfText(text);
+
+    // If main parser fails, try alternative
+    if (parsedQuestions.length === 0) {
+      console.log('Main parser failed, trying alternative...');
+      parsedQuestions = parseCompressedTextFormat(text);
     }
 
-    console.log('Final parsed questions:', questionsParsed); // Debug log
-    return questionsParsed;
-  };
-
-  const handleManualPdfUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-
-    if (!isPDFFile(file)) {
-      toast.error('Please upload a PDF file with questions.');
+    if (parsedQuestions.length === 0) {
+      console.error('No questions detected after trying both parsers');
+      console.error('Text content:', text);
+      toast.error(
+        `Could not parse questions from PDF. The format may not be supported. Check console for details.`
+      );
       return;
     }
 
-    try {
-      setManualPdfLoading(true);
-      toast.info(
-        `Reading questions from ${file.name} (Option A format)...`
-      );
+    setQuestions((prev) => [...prev, ...parsedQuestions]);
+    setCurrentQuizId(null);
 
-      const text = await extractTextFromPDF(file);
-      console.log('Extracted PDF text:', text); // Debug log
-      
-      const parsedQuestions = parseQuestionsFromPdfText(text);
-
-      if (parsedQuestions.length === 0) {
-        // Show the raw text in console for debugging
-        console.error('No questions detected in text:', text);
-        console.error('Try checking: Page breaks, Answer formatting, Option labels');
-        toast.error(
-          `No questions detected. Check browser console for detailed debugging info.`
-        );
-        return;
-      }
-
-      setQuestions((prev) => [...prev, ...parsedQuestions]);
-      setCurrentQuizId(null);
-
-      toast.success(
-        `Imported ${parsedQuestions.length} question(s) from PDF`
-      );
-    } catch (err) {
-      console.error('Error importing questions from PDF:', err);
-      toast.error('Failed to extract questions from PDF.');
-    } finally {
-      setManualPdfLoading(false);
-      if (e.target) e.target.value = '';
-    }
-  };
+    toast.success(`Imported ${parsedQuestions.length} question(s) from PDF`);
+  } catch (err) {
+    console.error('Error importing questions from PDF:', err);
+    toast.error('Failed to extract questions from PDF.');
+  } finally {
+    setManualPdfLoading(false);
+    if (e.target) e.target.value = '';
+  }
+};
 
   // ---------------------------------------------------------------------
 
