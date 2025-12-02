@@ -1,4 +1,3 @@
-// src/pages/CreateQuizPage.tsx
 import { useState, useEffect } from 'react';
 import {
   FileText,
@@ -321,17 +320,11 @@ export default function CreateQuizPage() {
     );
   };
 
-  // ---------- FIXED PDF PARSER THAT PROPERLY HANDLES ALL 4 OPTIONS ----------
-
-  /**
-   * Robust PDF parser that ensures all 4 options are captured correctly
-   * and prevents adding extra options to existing questions
-   */
+  // ---------- PDF PARSER (kept as you provided) ----------
   const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
     console.log('=== PDF PARSER STARTED ===');
     console.log('RAW PDF TEXT:', text);
 
-    // Comprehensive text normalization
     const normalizedText = text
       .replace(/===== Page \d+ =====/gi, '')
       .replace(/Page \d+/gi, '')
@@ -347,37 +340,40 @@ export default function CreateQuizPage() {
     console.log('NORMALIZED TEXT:', normalizedText);
 
     const questionsParsed: ExtendedQuestion[] = [];
-    const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    
+    const lines = normalizedText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
     console.log('LINES TO PROCESS:', lines.length);
 
     let currentQuestion: {
       id?: string;
       questionText?: string;
-      options: string[]; // Changed to array to maintain order
+      options: string[];
       correctAnswer?: string;
       lineNumber?: number;
     } = { options: [], lineNumber: 0 };
 
     const finalizeQuestion = () => {
       if (currentQuestion.questionText && currentQuestion.options.length >= 2) {
-        // Ensure we have exactly 4 options, fill empty ones if needed
         const options = [...currentQuestion.options];
         while (options.length < 4) {
           options.push('');
         }
-        
-        // Take only first 4 options to prevent extra options
         const finalOptions = options.slice(0, 4);
 
         if (currentQuestion.questionText.length > 5) {
-          const correctIndex = currentQuestion.correctAnswer 
-            ? ['A', 'B', 'C', 'D'].indexOf(currentQuestion.correctAnswer.toUpperCase())
+          const correctIndex = currentQuestion.correctAnswer
+            ? ['A', 'B', 'C', 'D'].indexOf(
+                currentQuestion.correctAnswer.toUpperCase()
+              )
             : -1;
 
-          const answer = correctIndex >= 0 && correctIndex < finalOptions.length
-            ? finalOptions[correctIndex]
-            : '';
+          const answer =
+            correctIndex >= 0 && correctIndex < finalOptions.length
+              ? finalOptions[correctIndex]
+              : '';
 
           const q: ExtendedQuestion = {
             id: `pdf-${Date.now()}-${questionsParsed.length}`,
@@ -393,51 +389,55 @@ export default function CreateQuizPage() {
           };
 
           questionsParsed.push(q);
-          console.log(`✅ ADDED QUESTION with ${finalOptions.filter(opt => opt).length} options:`, {
-            question: currentQuestion.questionText.substring(0, 50),
-            options: finalOptions,
-            correctAnswer: currentQuestion.correctAnswer
-          });
+          console.log(
+            `✅ ADDED QUESTION with ${
+              finalOptions.filter((opt) => opt).length
+            } options:`,
+            {
+              question:
+                currentQuestion.questionText.substring(0, 50),
+              options: finalOptions,
+              correctAnswer: currentQuestion.correctAnswer,
+            }
+          );
         }
       }
-      
-      // Reset for next question
+
       currentQuestion = { options: [], lineNumber: currentQuestion.lineNumber };
     };
 
-    // Process each line
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       currentQuestion.lineNumber = i;
 
-      // Check for new question
       const questionMatch = line.match(/^(\d+)[\.\)]?\s+(.+)$/);
       if (questionMatch) {
-        // Finalize previous question if exists
         if (currentQuestion.questionText) {
           finalizeQuestion();
         }
-        
+
         currentQuestion.questionText = questionMatch[2].trim();
-        currentQuestion.options = []; // Reset options array
+        currentQuestion.options = [];
         currentQuestion.correctAnswer = undefined;
-        console.log(`📝 NEW QUESTION: "${currentQuestion.questionText.substring(0, 50)}..."`);
+        console.log(
+          `📝 NEW QUESTION: "${currentQuestion.questionText.substring(
+            0,
+            50
+          )}..."`
+        );
         continue;
       }
 
-      // Check for options - FIXED: Properly capture all 4 options
       const optionMatch = line.match(/^([A-D])[\.\)]?\s+(.+)$/i);
       if (optionMatch && currentQuestion.questionText) {
         const letter = optionMatch[1].toUpperCase();
         const text = optionMatch[2].trim();
         const optionIndex = ['A', 'B', 'C', 'D'].indexOf(letter);
-        
-        // Ensure we have slots for all previous options
+
         while (currentQuestion.options.length < optionIndex) {
           currentQuestion.options.push('');
         }
-        
-        // Add the option at the correct position
+
         if (optionIndex >= 0) {
           currentQuestion.options[optionIndex] = text;
           console.log(`   📋 OPTION ${letter} (index ${optionIndex}): ${text}`);
@@ -445,53 +445,63 @@ export default function CreateQuizPage() {
         continue;
       }
 
-      // Check for answer
       const answerMatch = line.match(/^Answer:\s*([A-D])/i);
       if (answerMatch && currentQuestion.questionText) {
         currentQuestion.correctAnswer = answerMatch[1].toUpperCase();
-        console.log(`   ✅ ANSWER: ${currentQuestion.correctAnswer}`);
+        console.log(
+          `   ✅ ANSWER: ${currentQuestion.correctAnswer}`
+        );
         continue;
       }
 
-      // Handle compressed format - FIXED: Extract all options properly
-      if (currentQuestion.questionText && (line.includes('A.') || line.includes('B.') || line.includes('C.') || line.includes('D.'))) {
+      if (
+        currentQuestion.questionText &&
+        (line.includes('A.') ||
+          line.includes('B.') ||
+          line.includes('C.') ||
+          line.includes('D.'))
+      ) {
         console.log(`   🔍 COMPRESSED LINE DETECTED: ${line}`);
-        
-        // Extract ALL options from compressed line using global regex
-        const optionRegex = /([A-D])\.\s*([^A-D\.]*)(?=\s*(?:[A-D]\.|Answer:|$))/g;
-        let optionMatch;
-        
-        while ((optionMatch = optionRegex.exec(line)) !== null) {
-          const letter = optionMatch[1].toUpperCase();
-          const text = optionMatch[2].trim();
+
+        const optionRegex =
+          /([A-D])\.\s*([^A-D\.]*)(?=\s*(?:[A-D]\.|Answer:|$))/g;
+        let optionMatch2;
+
+        while ((optionMatch2 = optionRegex.exec(line)) !== null) {
+          const letter = optionMatch2[1].toUpperCase();
+          const text = optionMatch2[2].trim();
           const optionIndex = ['A', 'B', 'C', 'D'].indexOf(letter);
-          
+
           if (optionIndex >= 0 && text) {
-            // Ensure we have slots for all previous options
             while (currentQuestion.options.length < optionIndex) {
               currentQuestion.options.push('');
             }
             currentQuestion.options[optionIndex] = text;
-            console.log(`   📋 COMPRESSED OPTION ${letter}: ${text}`);
+            console.log(
+              `   📋 COMPRESSED OPTION ${letter}: ${text}`
+            );
           }
         }
 
-        // Extract answer from compressed line
         const compressedAnswer = line.match(/Answer:\s*([A-D])/i);
         if (compressedAnswer && !currentQuestion.correctAnswer) {
-          currentQuestion.correctAnswer = compressedAnswer[1].toUpperCase();
+          currentQuestion.correctAnswer =
+            compressedAnswer[1].toUpperCase();
         }
       }
 
-      // Finalize if we detect next question
-      const nextLineQuestion = i < lines.length - 1 ? lines[i + 1].match(/^\d+[\.\)]?\s+/) : false;
+      const nextLineQuestion =
+        i < lines.length - 1
+          ? lines[i + 1].match(/^\d+[\.\)]?\s+/)
+          : false;
       if (nextLineQuestion && currentQuestion.questionText) {
-        console.log(`   ⏩ NEXT QUESTION DETECTED, FINALIZING CURRENT`);
+        console.log(
+          `   ⏩ NEXT QUESTION DETECTED, FINALIZING CURRENT`
+        );
         finalizeQuestion();
       }
     }
 
-    // Finalize the last question
     if (currentQuestion.questionText) {
       finalizeQuestion();
     }
@@ -499,64 +509,83 @@ export default function CreateQuizPage() {
     console.log('=== PDF PARSER COMPLETED ===');
     console.log(`FOUND ${questionsParsed.length} QUESTIONS`);
     questionsParsed.forEach((q, index) => {
-      console.log(`Q${index + 1}: ${q.question?.substring(0, 50)}... - Options: ${q.options?.filter(opt => opt).length}`);
+      console.log(
+        `Q${index + 1}: ${q.question?.substring(
+          0,
+          50
+        )}... - Options: ${q.options?.filter((opt) => opt).length}`
+      );
     });
-    
+
     return questionsParsed;
   };
 
-  // Alternative parser for edge cases - FIXED to handle all 4 options
-  const parseCompressedTextFormat = (text: string): ExtendedQuestion[] => {
-    console.log('🔄 USING ALTERNATIVE PARSER FOR COMPRESSED TEXT');
-    
+  const parseCompressedTextFormat = (
+    text: string
+  ): ExtendedQuestion[] => {
+    console.log(
+      '🔄 USING ALTERNATIVE PARSER FOR COMPRESSED TEXT'
+    );
+
     const questionsParsed: ExtendedQuestion[] = [];
-    
-    // Handle fully compressed text (everything in one block)
-    const questionBlocks = text.split(/(?=\d+[\.\)]?\s+)/).filter(block => block.trim());
-    
+
+    const questionBlocks = text
+      .split(/(?=\d+[\.\)]?\s+)/)
+      .filter((block) => block.trim());
+
     questionBlocks.forEach((block, index) => {
-      console.log(`Processing compressed block ${index + 1}:`, block.substring(0, 100) + '...');
-      
-      // Extract question
-      const questionMatch = block.match(/^\d+[\.\)]?\s*([^A-D]*?)(?=[A-D][\.\)]|Answer:|$)/);
+      console.log(
+        `Processing compressed block ${index + 1}:`,
+        block.substring(0, 100) + '...'
+      );
+
+      const questionMatch = block.match(
+        /^\d+[\.\)]?\s*([^A-D]*?)(?=[A-D][\.\)]|Answer:|$)/
+      );
       if (!questionMatch) return;
-      
+
       const questionText = questionMatch[1].trim();
-      
-      // Extract all options using improved regex
+
       const options: string[] = [];
-      const optionRegex = /([A-D])[\.\)]?\s*([^A-D]*?)(?=(?:[A-D][\.\)]|Answer:|$))/g;
+      const optionRegex =
+        /([A-D])[\.\)]?\s*([^A-D]*?)(?=(?:[A-D][\.\)]|Answer:|$))/g;
       let optionMatch;
-      
+
       while ((optionMatch = optionRegex.exec(block)) !== null) {
         const letter = optionMatch[1].toUpperCase();
         const text = optionMatch[2].trim();
         const optionIndex = ['A', 'B', 'C', 'D'].indexOf(letter);
-        
+
         if (optionIndex >= 0 && text) {
-          // Ensure we have slots for all previous options
           while (options.length < optionIndex) {
             options.push('');
           }
           options[optionIndex] = text;
         }
       }
-      
-      // Ensure we have exactly 4 options
+
       while (options.length < 4) {
         options.push('');
       }
       const finalOptions = options.slice(0, 4);
-      
-      // Extract answer
+
       const answerMatch = block.match(/Answer:\s*([A-D])/gi);
-      const correctAnswer = answerMatch ? answerMatch[0].match(/[A-D]/i)?.[0].toUpperCase() : '';
-      
-      // Create question if valid
-      if (questionText && finalOptions.filter(opt => opt).length >= 2) {
-        const correctIndex = correctAnswer ? ['A', 'B', 'C', 'D'].indexOf(correctAnswer) : -1;
-        const answer = correctIndex >= 0 && correctIndex < finalOptions.length ? finalOptions[correctIndex] : '';
-        
+      const correctAnswer = answerMatch
+        ? answerMatch[0].match(/[A-D]/i)?.[0].toUpperCase()
+        : '';
+
+      if (
+        questionText &&
+        finalOptions.filter((opt) => opt).length >= 2
+      ) {
+        const correctIndex = correctAnswer
+          ? ['A', 'B', 'C', 'D'].indexOf(correctAnswer)
+          : -1;
+        const answer =
+          correctIndex >= 0 && correctIndex < finalOptions.length
+            ? finalOptions[correctIndex]
+            : '';
+
         const q: ExtendedQuestion = {
           id: `pdf-compressed-${Date.now()}-${index}`,
           // @ts-ignore
@@ -569,12 +598,16 @@ export default function CreateQuizPage() {
           isSelected: true,
           section: '',
         };
-        
+
         questionsParsed.push(q);
-        console.log(`✅ ALTERNATIVE PARSER ADDED QUESTION with ${finalOptions.filter(opt => opt).length} options`);
+        console.log(
+          `✅ ALTERNATIVE PARSER ADDED QUESTION with ${
+            finalOptions.filter((opt) => opt).length
+          } options`
+        );
       }
     });
-    
+
     return questionsParsed;
   };
 
@@ -598,12 +631,13 @@ export default function CreateQuizPage() {
       const text = await extractTextFromPDF(file);
       console.log('=== PDF EXTRACTION COMPLETE ===');
       console.log('EXTRACTED TEXT LENGTH:', text.length);
-      
+
       let parsedQuestions = parseQuestionsFromPdfText(text);
 
-      // If main parser finds nothing, try alternative approach
       if (parsedQuestions.length === 0) {
-        console.log('🔄 Main parser found 0 questions, trying alternative parser...');
+        console.log(
+          '🔄 Main parser found 0 questions, trying alternative parser...'
+        );
         parsedQuestions = parseCompressedTextFormat(text);
       }
 
@@ -620,27 +654,31 @@ export default function CreateQuizPage() {
         return;
       }
 
-      // FIXED: Prevent adding extra options by replacing existing questions
-      // instead of appending to them
       setQuestions((prev) => {
-        // Remove any existing PDF questions to avoid duplicates
-        const nonPdfQuestions = prev.filter(q => !q.id?.includes('pdf-'));
+        const nonPdfQuestions = prev.filter(
+          (q) => !q.id?.includes('pdf-')
+        );
         return [...nonPdfQuestions, ...parsedQuestions];
       });
-      
+
       setCurrentQuizId(null);
 
-      toast.success(`✅ Imported ${parsedQuestions.length} question(s) from PDF`);
+      toast.success(
+        `✅ Imported ${parsedQuestions.length} question(s) from PDF`
+      );
     } catch (err) {
-      console.error('❌ Error importing questions from PDF:', err);
-      toast.error('Failed to extract questions from PDF. Please try another file.');
+      console.error(
+        '❌ Error importing questions from PDF:',
+        err
+      );
+      toast.error(
+        'Failed to extract questions from PDF. Please try another file.'
+      );
     } finally {
       setManualPdfLoading(false);
       if (e.target) e.target.value = '';
     }
   };
-
-  // ---------------------------------------------------------------------
 
   const handleExportJSON = () => {
     const selectedQuestions = questions.filter((q) => q.isSelected);
@@ -697,7 +735,9 @@ export default function CreateQuizPage() {
     const quizId =
       saveRes.quizId ||
       (saveRes.quiz &&
-        (saveRes.quiz._id || saveRes.quiz.id || saveRes.quizId));
+        (saveRes.quiz._id ||
+          saveRes.quiz.id ||
+          saveRes.quizId));
 
     if (!quizId) {
       throw new Error('Server did not return quizId');
@@ -792,17 +832,14 @@ export default function CreateQuizPage() {
     setShareProgress(null);
 
     try {
-      // Ensure quiz is saved (create or update)
       let quizId = currentQuizId;
       if (!quizId) {
         quizId = await saveQuizToServer(quizTitle, selectedQuestions);
       }
 
-      // Resolve selected student IDs to emails
       let studentEmails = (selectedStudents || [])
         .map((s) => {
-          if (typeof s === 'string' && s.includes('@'))
-            return s.trim();
+          if (typeof s === 'string' && s.includes('@')) return s.trim();
 
           try {
             const parsed = JSON.parse(String(s));
@@ -989,7 +1026,7 @@ export default function CreateQuizPage() {
                 </Label>
                 <label className="mt-2 flex items-center justify-center w-full h-24 md:h-32 border-2 border-dashed border-border rounded-lg hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group">
                   <div className="text-center p-3 md:p-4">
-                    <FolderPlus className="h-6 w-6 md:h-8 md:w-8 mx-auto text-muted-foreground mb-2 group-hover:text-primary transition-colors" />
+                    <FolderPlus className="h-4 w-4 md:h-5 md:w-5 mx-auto text-muted-foreground mb-2 group-hover:text-primary transition-colors" />
                     <p className="text-xs md:text-sm text-muted-foreground group-hover:text-primary transition-colors font-medium">
                       Click to upload or drag and drop
                     </p>
@@ -1025,10 +1062,7 @@ export default function CreateQuizPage() {
                           {file.name}
                         </span>
                         <span className="text-[10px] text-muted-foreground">
-                          {(
-                            file.size /
-                            (1024 * 1024)
-                          ).toFixed(1)}
+                          {(file.size / (1024 * 1024)).toFixed(1)}
                           MB
                         </span>
                         <Button
@@ -1227,7 +1261,6 @@ export default function CreateQuizPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Manual add buttons */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   type="button"
@@ -1249,7 +1282,6 @@ export default function CreateQuizPage() {
                 </Button>
               </div>
 
-              {/* PDF import (Option A) */}
               <div className="pt-2 border-t mt-2 space-y-2">
                 <Label className="text-xs md:text-sm font-medium flex items-center gap-2">
                   <FileScan className="h-4 w-4 text-primary" />
@@ -1420,7 +1452,9 @@ export default function CreateQuizPage() {
 
                 <Button
                   onClick={handleBookmarkQuiz}
-                  disabled={selectedCount === 0 || !quizTitle.trim()}
+                  disabled={
+                    selectedCount === 0 || !quizTitle.trim()
+                  }
                   variant="outline"
                   className="flex-1"
                 >
@@ -1436,7 +1470,8 @@ export default function CreateQuizPage() {
                     <Button
                       variant="outline"
                       disabled={
-                        selectedCount === 0 || students.length === 0
+                        selectedCount === 0 ||
+                        students.length === 0
                       }
                       className="flex-1"
                     >

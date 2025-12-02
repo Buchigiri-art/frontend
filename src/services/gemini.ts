@@ -1,4 +1,3 @@
-// src/services/gemini.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Question } from '@/types';
 
@@ -23,7 +22,9 @@ export async function generateQuestions(
   params: GenerateQuestionsParams
 ): Promise<Question[]> {
   if (!genAI) {
-    throw new Error('Gemini API key is not configured. Please add VITE_GEMINI_API_KEY to your .env file.');
+    throw new Error(
+      'Gemini API key is not configured. Please add VITE_GEMINI_API_KEY to your .env file.'
+    );
   }
 
   const { text, numQuestions, type, customPrompt, difficulty } = params;
@@ -35,24 +36,36 @@ export async function generateQuestions(
     difficultyInstruction = '- Mix difficulty levels across questions (easy, medium, and hard)';
   }
 
-  // 🧠 VERY IMPORTANT: FORCE questions to come ONLY from CONTENT
+  // 🔒 VERY STRICT CONTENT-ONLY + TEXTBOOK-LIKE OPTIONS
   const basePrompt = `You are an expert educator creating high-quality quiz questions.
 
-You MUST follow these rules VERY STRICTLY:
+ABSOLUTE RULES (MUST follow):
 - USE ONLY the information present in the CONTENT below.
-- DO NOT use outside knowledge, general world knowledge, or information not explicitly in CONTENT.
-- Every question and every correct answer MUST be directly answerable from CONTENT (either verbatim or a very close paraphrase).
-- If some topic is not mentioned in CONTENT, you MUST NOT create a question about it.
+- DO NOT use outside knowledge, general world knowledge, or anything not explicitly in CONTENT.
+- Every question, every correct answer, and every wrong option MUST be directly grounded in the CONTENT.
+- If some topic is not mentioned in CONTENT, you MUST NOT create a question or option about it.
 
 CONTENT (the ONLY source of truth):
 """
 ${text}
 """
 
+STYLE REQUIREMENTS (very important):
+- The questions and options should feel like they came directly from this CONTENT (textbook/notes style).
+- Reuse the same vocabulary, terminology, key phrases, symbols, variable names, and technical language from CONTENT.
+- When possible, build options by:
+  - quoting short phrases from CONTENT, or
+  - making very close paraphrases of sentences from CONTENT.
+- DO NOT invent new examples, numbers, functions, case studies, variable names, or stories that are not in CONTENT.
+- Wrong options (distractors) must also be plausible based on CONTENT:
+  - Use terms, concepts, or phrases that appear in CONTENT.
+  - You may mix or slightly twist concepts that are already in CONTENT.
+  - Do NOT use generic distractors from outside (e.g., some random library, framework, or topic never mentioned).
+
 TASK:
 Based ONLY on the CONTENT above, generate exactly ${numQuestions} quiz questions.
 
-REQUIREMENTS:
+QUESTION REQUIREMENTS:
 - Generate exactly ${numQuestions} questions.
 - Question type: ${
     type === 'mcq'
@@ -62,22 +75,34 @@ REQUIREMENTS:
       : 'A mix of MCQ and Short Answer (but still ONLY from CONTENT)'
   }
 ${difficultyInstruction}
-- Each question should test understanding of the CONTENT, not general knowledge.
-- For MCQs:
-  - Provide exactly 4 options (A, B, C, D).
-  - Only one option is correct.
-  - All options must be plausible based ONLY on CONTENT.
-- Include brief explanations for answers, again using ONLY information from CONTENT.
-- Cover different aspects of the CONTENT – but never go beyond it.
-- Do NOT introduce new concepts, examples, definitions, or facts that are not in CONTENT.
+- Each question should test understanding of CONTENT, not general knowledge.
+- Do NOT introduce new topics beyond what is in CONTENT.
 
-${customPrompt ? `ADDITIONAL INSTRUCTIONS (also must respect CONTENT-only rule):\n${customPrompt}\n` : ''}
+MCQ-SPECIFIC RULES (if MCQ is used):
+- Provide exactly 4 options (A, B, C, D).
+- Only one option is correct.
+- All options (correct and wrong) must look like they could have been read directly from the CONTENT:
+  - Use the same definitions, formulas, notation, or terms as in CONTENT.
+  - If CONTENT uses a specific wording, prefer to reuse that wording.
+- Do not create options like "All of the above", "None of the above" unless such phrasing is explicitly used in CONTENT.
+
+ANSWER & EXPLANATION REQUIREMENTS:
+- The correct answer must be justified by specific text from CONTENT.
+- In the explanation, briefly explain the answer using ONLY information from CONTENT.
+- Do NOT "teach from scratch"; instead, refer back to how the concept is described in CONTENT (same ideas, same words).
+
+${
+  customPrompt
+    ? `ADDITIONAL INSTRUCTIONS (still must respect CONTENT-only rule):\n${customPrompt}\n`
+    : ''
+}
 
 VALIDATION RULE (very strict):
-- For every question you create, if a human checked, they should be able to point to one or more specific sentences or parts in CONTENT that justify:
+- For every question you create, a human should be able to point to one or more specific sentences or parts in CONTENT that justify:
   - the question itself,
-  - the correct answer, and
-  - the explanation.
+  - the correct answer,
+  - every option (why it is correct or incorrect),
+  - and the explanation.
 - If this is not possible for a question, you MUST NOT include that question.
 
 OUTPUT FORMAT (strict JSON):
@@ -93,7 +118,11 @@ Return ONLY a valid JSON array with this exact structure and no extra text:
         ? '"options": ["Option A", "Option B", "Option C", "Option D"],'
         : ''
     }
-    "answer": "${type === 'mcq' || type === 'mixed' ? 'A' : 'Expected answer or key points based ONLY on CONTENT'}",
+    "answer": "${
+      type === 'mcq' || type === 'mixed'
+        ? 'A'
+        : 'Expected answer or key points based ONLY on CONTENT'
+    }",
     "explanation": "Brief explanation of the correct answer, using ONLY information from CONTENT"
   }
 ]
@@ -106,20 +135,19 @@ Generate the JSON array now. Do NOT include any text before or after the JSON ar
   for (const modelName of modelsToTry) {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        // 🔒 Add a systemInstruction that repeats the "content-only" rule
         const model = genAI.getGenerativeModel({
           model: modelName,
           systemInstruction:
             'You are an educator that MUST create questions ONLY from the provided CONTENT. ' +
             'You are forbidden from using any outside knowledge not present in CONTENT. ' +
-            'If something is not explicitly in CONTENT, you must NOT create a question about it.',
+            'All options must reuse vocabulary and phrases from CONTENT and must be clearly grounded in it.',
         });
 
         const result = await model.generateContent(basePrompt);
         const response = await result.response;
         let responseText = response.text().trim();
 
-        // Strip ```json ... ``` wrappers if present
+        // Strip ```json or ``` fences if present
         if (responseText.startsWith('```json')) {
           responseText = responseText.replace(/```json\n?/, '').replace(/\n?```$/, '');
         } else if (responseText.startsWith('```')) {
@@ -136,8 +164,7 @@ Generate the JSON array now. Do NOT include any text before or after the JSON ar
         }));
       } catch (error: any) {
         const message = error?.message || '';
-        const isOverload =
-          message.includes('503') || message.includes('overloaded');
+        const isOverload = message.includes('503') || message.includes('overloaded');
         const isRetryable = isOverload || message.includes('temporarily unavailable');
 
         if (!isRetryable || attempt === maxRetries - 1) {
@@ -145,7 +172,7 @@ Generate the JSON array now. Do NOT include any text before or after the JSON ar
           break;
         }
 
-        // simple backoff
+        // Exponential-ish backoff
         await new Promise((res) => setTimeout(res, 1000 * (attempt + 1)));
       }
     }
