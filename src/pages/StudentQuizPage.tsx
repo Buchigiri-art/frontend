@@ -17,6 +17,7 @@ const MAX_WARNINGS = 3;
 const LEAVE_BUDGET_MS = 10000; // 10 seconds total away budget
 const SPLIT_DIM_THRESHOLD = 0.8;
 const VIOLATION_COOLDOWN_MS = 3000; // for non-focus repeat violations
+const POLL_INTERVAL_MS = 150; // stricter poll interval
 
 const isMobile =
   typeof navigator !== 'undefined' &&
@@ -116,6 +117,7 @@ export default function StudentQuizPage() {
       resetAwayState();
       restoreBodyStyles();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // ----------------- Monitoring enable/disable -----------------
@@ -153,6 +155,7 @@ export default function StudentQuizPage() {
     }, 1000);
 
     return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quizStarted, quizSubmitted]);
 
   // ------------- Fetch quiz and attempt data -----------------
@@ -454,7 +457,7 @@ export default function StudentQuizPage() {
 
     document.addEventListener('visibilitychange', onVisibilityChange, true);
     window.addEventListener('focus', onWindowFocus, true);
-    // NOTE: we no longer handle "blur" here; polling loop covers it
+    window.addEventListener('blur', onWindowBlur, true); // NEW: treat blur as potential away
     document.addEventListener('fullscreenchange', onFullscreenChange, true);
     window.addEventListener('copy', onCopyAttempt, true);
     window.addEventListener('beforeunload', onBeforeUnload, true);
@@ -481,6 +484,7 @@ export default function StudentQuizPage() {
 
     document.removeEventListener('visibilitychange', onVisibilityChange, true);
     window.removeEventListener('focus', onWindowFocus, true);
+    window.removeEventListener('blur', onWindowBlur, true); // NEW
     document.removeEventListener('fullscreenchange', onFullscreenChange, true);
     window.removeEventListener('copy', onCopyAttempt, true);
     window.removeEventListener('beforeunload', onBeforeUnload, true);
@@ -498,7 +502,7 @@ export default function StudentQuizPage() {
 
     // If quiz not active, just reschedule check and bail
     if (!guard()) {
-      requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
+      requestAnimationFrame(() => setTimeout(pollFocusVisibility, POLL_INTERVAL_MS));
       return;
     }
 
@@ -567,7 +571,8 @@ export default function StudentQuizPage() {
       }
     }
 
-    requestAnimationFrame(() => setTimeout(pollFocusVisibility, 250));
+    requestAnimationFrame(() => setTimeout(pollFocusVisibility, POLL_INTERVAL_MS));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------------- Warnings management ----------------
@@ -673,6 +678,39 @@ export default function StudentQuizPage() {
   const onWindowFocus = () => {
     if (!guard()) return;
     handleReturnToFocus();
+  };
+
+  // NEW: strict blur handler
+  const onWindowBlur = () => {
+    if (!guard()) return;
+
+    // Treat ANY blur as a potential away episode; confirm using same conditions as polling
+    handleFocusLostViolation('event:blur', () => {
+      const fullscreenOk =
+        !didEnterFullscreenRef.current || !!document.fullscreenElement;
+
+      let splitLost = false;
+      try {
+        const sw = window.screen.width || window.innerWidth;
+        const sh = window.screen.height || window.innerHeight;
+        if (sw && sh) {
+          const wr = window.innerWidth / sw;
+          const hr = window.innerHeight / sh;
+          if (wr < SPLIT_DIM_THRESHOLD || hr < SPLIT_DIM_THRESHOLD) {
+            splitLost = true;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      return (
+        document.visibilityState !== 'visible' ||
+        !(document.hasFocus && document.hasFocus()) ||
+        !fullscreenOk ||
+        splitLost
+      );
+    });
   };
 
   const onFullscreenChange = () => {
