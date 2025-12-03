@@ -8,7 +8,7 @@ import {
   Share2,
   FolderPlus,
   Folder,
-  Download, // ⬅️ NEW: for download button
+  Download,
 } from 'lucide-react';
 import {
   Card,
@@ -56,6 +56,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import { AnimatePresence, motion } from 'framer-motion';
 
 const SHARE_BATCH_SIZE = 100; // batch size for sending quiz links
@@ -87,6 +88,19 @@ export default function BookmarksPage() {
     total: number;
   } | null>(null);
   const [isSharing, setIsSharing] = useState(false);
+
+  // question inline edit dialog state
+  const [questionEditState, setQuestionEditState] = useState<{
+    open: boolean;
+    bookmarkId: string | null;
+    questionIndex: number | null;
+    question: any | null;
+  }>({
+    open: false,
+    bookmarkId: null,
+    questionIndex: null,
+    question: null,
+  });
 
   useEffect(() => {
     fetchData();
@@ -134,12 +148,6 @@ export default function BookmarksPage() {
     toast.info('Opening in Create Quiz page');
   };
 
-  // Edit a single question from a bookmarked quiz
-  const handleEditQuestionFromBookmark = (question: any) => {
-    navigate('/create-quiz', { state: { editQuestion: question } });
-    toast.info('Opening question in Create Quiz page');
-  };
-
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) {
       toast.error('Folder name is required');
@@ -160,7 +168,7 @@ export default function BookmarksPage() {
     }
   };
 
-  // ✅ NEW: Download quiz questions as .txt
+  // ✅ Download quiz questions as .txt
   const handleDownloadQuizQuestions = (bookmark: any) => {
     const quiz = bookmark.quiz;
     if (!quiz || !Array.isArray(quiz.questions)) {
@@ -219,6 +227,128 @@ export default function BookmarksPage() {
 
     URL.revokeObjectURL(url);
     toast.success('Questions downloaded as .txt');
+  };
+
+  // 🔧 INLINE QUESTION EDIT HELPERS
+
+  // Open inline editor for a single question inside a bookmarked quiz
+  const openQuestionEditDialog = (
+    bookmarkId: string,
+    question: any,
+    index: number
+  ) => {
+    setQuestionEditState({
+      open: true,
+      bookmarkId,
+      questionIndex: index,
+      question: {
+        ...question,
+        options: Array.isArray(question.options)
+          ? [...question.options]
+          : [],
+      },
+    });
+  };
+
+  // Update any top-level field of the edited question (question, answer, explanation, etc.)
+  const updateEditedQuestion = (patch: Partial<any>) => {
+    setQuestionEditState((prev) => ({
+      ...prev,
+      question: {
+        ...(prev.question || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  // Update a specific option
+  const updateEditedOption = (optIndex: number, value: string) => {
+    setQuestionEditState((prev) => {
+      if (!prev.question) return prev;
+      const options = [...(prev.question.options || [])];
+      options[optIndex] = value;
+      return {
+        ...prev,
+        question: {
+          ...prev.question,
+          options,
+        },
+      };
+    });
+  };
+
+  // Add a new empty option
+  const addEditedOption = () => {
+    setQuestionEditState((prev) => {
+      if (!prev.question) return prev;
+      const options = [...(prev.question.options || [])];
+      options.push('');
+      return {
+        ...prev,
+        question: {
+          ...prev.question,
+          options,
+        },
+      };
+    });
+  };
+
+  // Remove an option
+  const removeEditedOption = (optIndex: number) => {
+    setQuestionEditState((prev) => {
+      if (!prev.question) return prev;
+      const options = [...(prev.question.options || [])];
+      options.splice(optIndex, 1);
+      return {
+        ...prev,
+        question: {
+          ...prev.question,
+          options,
+        },
+      };
+    });
+  };
+
+  // Save back into bookmarks state
+  const saveEditedQuestion = () => {
+    if (
+      !questionEditState.bookmarkId ||
+      questionEditState.questionIndex === null ||
+      !questionEditState.question
+    ) {
+      return;
+    }
+
+    setBookmarks((prev) =>
+      prev.map((b) => {
+        if (b._id !== questionEditState.bookmarkId) return b;
+
+        const questions = [...(b.quiz?.questions || [])];
+        questions[questionEditState.questionIndex!] = {
+          ...questions[questionEditState.questionIndex!],
+          ...questionEditState.question,
+        };
+
+        return {
+          ...b,
+          quiz: {
+            ...b.quiz,
+            questions,
+          },
+        };
+      })
+    );
+
+    // If you want to persist to backend, call quizAPI.update(...) here
+
+    toast.success('Question updated');
+
+    setQuestionEditState({
+      open: false,
+      bookmarkId: null,
+      questionIndex: null,
+      question: null,
+    });
   };
 
   // Batched sharing for large email lists
@@ -688,8 +818,10 @@ export default function BookmarksPage() {
                                                           variant="ghost"
                                                           className="h-7 w-7"
                                                           onClick={() =>
-                                                            handleEditQuestionFromBookmark(
-                                                              q
+                                                            openQuestionEditDialog(
+                                                              bookmark._id,
+                                                              q,
+                                                              idx
                                                             )
                                                           }
                                                         >
@@ -758,6 +890,136 @@ export default function BookmarksPage() {
           </AnimatePresence>
         </Accordion>
       )}
+
+      {/* QUESTION INLINE EDIT DIALOG */}
+      <Dialog
+        open={questionEditState.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setQuestionEditState({
+              open: false,
+              bookmarkId: null,
+              questionIndex: null,
+              question: null,
+            });
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Question</DialogTitle>
+            <DialogDescription>
+              Update the question, its options, answer and explanation.
+            </DialogDescription>
+          </DialogHeader>
+
+          {questionEditState.question && (
+            <div className="space-y-4">
+              {/* Question text */}
+              <div className="space-y-1">
+                <Label>Question</Label>
+                <Textarea
+                  rows={3}
+                  value={questionEditState.question.question || ''}
+                  onChange={(e) =>
+                    updateEditedQuestion({ question: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Options */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Options</Label>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={addEditedOption}
+                  >
+                    + Add option
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {(questionEditState.question.options || []).map(
+                    (opt: string, i: number) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2"
+                      >
+                        <span className="text-xs w-5">
+                          {String.fromCharCode(65 + i)}.
+                        </span>
+                        <Input
+                          value={opt}
+                          onChange={(e) =>
+                            updateEditedOption(i, e.target.value)
+                          }
+                          className="h-8 text-sm"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => removeEditedOption(i)}
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+
+              {/* Answer */}
+              <div className="space-y-1">
+                <Label>Answer</Label>
+                <Input
+                  value={questionEditState.question.answer || ''}
+                  onChange={(e) =>
+                    updateEditedQuestion({ answer: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Explanation */}
+              <div className="space-y-1">
+                <Label>Explanation (optional)</Label>
+                <Textarea
+                  rows={3}
+                  value={questionEditState.question.explanation || ''}
+                  onChange={(e) =>
+                    updateEditedQuestion({
+                      explanation: e.target.value,
+                    })
+                  }
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() =>
+                    setQuestionEditState({
+                      open: false,
+                      bookmarkId: null,
+                      questionIndex: null,
+                      question: null,
+                    })
+                  }
+                >
+                  Cancel
+                </Button>
+                <Button type="button" onClick={saveEditedQuestion}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* SHARE DIALOG */}
       <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
