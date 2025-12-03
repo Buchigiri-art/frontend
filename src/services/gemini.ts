@@ -36,7 +36,7 @@ export async function generateQuestions(
     difficultyInstruction = '- Mix difficulty levels across questions (easy, medium, and hard)';
   }
 
-  // 🔒 VERY STRICT CONTENT-ONLY + TEXTBOOK-LIKE OPTIONS + EXACT MULTI-LINE CODE/TABLES
+  // 🚀 SUPER STRICT: CONTENT-ONLY + DIRECT QUESTIONS + PROPER MULTI-LINE CODE/TABLES
   const basePrompt = `You are an expert educator creating high-quality quiz questions.
 
 ABSOLUTE RULES (MUST follow):
@@ -50,27 +50,44 @@ CONTENT (the ONLY source of truth):
 ${text}
 """
 
-CODE / TABLE / FORMULA HANDLING (VERY IMPORTANT):
-- If the CONTENT contains code blocks, configuration snippets, command lines, tables, or formulas, you MUST preserve them exactly when you use them in a question.
+OUTPUT STYLE (VERY IMPORTANT - NO META REFERENCES):
+- The final questions must look like normal exam questions.
+- Do NOT mention things like:
+  - "according to the above text"
+  - "based on the passage"
+  - "from the given content"
+  - "in the notes above"
+  - "in the provided material"
+- Just ask the question directly, as if it stands alone on an exam paper.
+
+CODE / TABLE / EXAMPLE HANDLING (VERY IMPORTANT):
+- If the CONTENT contains code blocks, configuration snippets, command lines, tables, or concrete examples, you MUST preserve them exactly when you use them in a question.
 - For code:
   - Copy the exact code (same variable names, spacing, structure) from CONTENT.
-  - Preserve ALL original line breaks and indentation. Do NOT compress multi-line code into a single line.
-  - Wrap code in Markdown fences, for example:
+  - Preserve ALL original line breaks and indentation.
+  - When you put this inside JSON, every newline MUST be written as "\\n" (escaped), not as a literal line break.
+  - Wrap code in Markdown fences inside the "question" string, for example:
 
-    "question": "Consider the following code snippet:\\n\\n\`\`\`python
-def foo(x):
-    return x + 1
-\`\`\`\\nWhat does this function return when x = 2?"
+    "question": "What does the following code print?\\n\\n\`\`\`python\\nfor i in range(3):\\n    print(i)\\n\`\`\`"
 
-  - It is allowed to put real newlines inside the JSON string. You do NOT need to escape every newline as \\n; standard JSON strings may contain real newlines.
-  - DO NOT paraphrase code like "the following function" or "the given code snippet" if you can show the actual code.
-  - DO NOT invent new code or modify existing code that is not exactly in CONTENT.
+  - Do NOT compress multi-line code into a single line.
+  - Do NOT paraphrase code like "the following function" if you can show the actual code.
+  - Do NOT invent new code or modify existing code that is not exactly in CONTENT.
+
 - For tables:
-  - If the CONTENT shows tables (e.g., rows starting with '|' or tabular structures), copy the table text exactly into the question using Markdown table syntax.
-  - Do NOT summarize a table in prose when you can embed the table directly.
+  - If the CONTENT shows tables (e.g., rows starting with '|' or other tabular structures), copy the table text exactly into the question using Markdown table syntax.
+  - Again: all line breaks MUST be encoded as "\\n" inside the JSON string.
+  - Example:
+    "question": "Study the following table:\\n\\n| Col1 | Col2 |\\n|------|------|\\n|  1   |  2   |\\n\\nWhat is ...?"
+
+- For examples (narrative examples, sample datasets, etc.):
+  - Copy them word-for-word into the question text before asking about them.
+  - Example:
+    "question": "A dataset contains 100 rows, each describing a house with its price. Which ...?"
+
 - For formulas / math:
-  - Preserve notation exactly as in CONTENT (e.g., f(x) = ..., Σ, subscripts, superscripts, etc.).
-  - If LaTeX-style math is used, keep the same LaTeX syntax.
+  - Preserve notation exactly as in CONTENT (e.g., f(x) = ..., Σ, subscripts, superscripts, LaTeX math).
+  - Do NOT rewrite formulas into a different style.
 
 STYLE REQUIREMENTS:
 - The questions and options should feel like they came directly from this CONTENT (textbook/notes style).
@@ -99,7 +116,7 @@ QUESTION REQUIREMENTS:
 ${difficultyInstruction}
 - Each question should test understanding of CONTENT, not general knowledge.
 - Do NOT introduce new topics beyond what is in CONTENT.
-- Where relevant, embed the exact multi-line code/table/formula snippet from CONTENT in the question text, instead of describing it abstractly.
+- Where relevant, embed the exact multi-line code/table/example snippet from CONTENT directly in the question text, instead of describing it abstractly.
 
 MCQ-SPECIFIC RULES (if MCQ is used):
 - Provide exactly 4 options (A, B, C, D).
@@ -112,12 +129,12 @@ MCQ-SPECIFIC RULES (if MCQ is used):
 ANSWER & EXPLANATION REQUIREMENTS:
 - The correct answer must be justified by specific text from CONTENT.
 - In the explanation, briefly explain the answer using ONLY information from CONTENT.
-- Do NOT "teach from scratch"; instead, refer back to how the concept is described in CONTENT (same ideas, same words).
-- If the question uses a code snippet or table, the explanation should reference that exact snippet (without inventing new code).
+- If the question uses a code snippet, table, or example, the explanation should reference that same snippet.
+- Explanations must not mention "according to the text" or "as stated in the content"; just explain the concept directly.
 
 ${
   customPrompt
-    ? `ADDITIONAL INSTRUCTIONS (still must respect CONTENT-only rule):\n${customPrompt}\n`
+    ? `ADDITIONAL INSTRUCTIONS (still must respect CONTENT-only rule):\\n${customPrompt}\\n`
     : ''
 }
 
@@ -127,13 +144,13 @@ VALIDATION RULE (very strict):
   - the correct answer,
   - every option (why it is correct or incorrect),
   - the explanation,
-  - and any code/table/formula you show.
+  - and any code/table/example you show.
 - If this is not possible for a question, you MUST NOT include that question.
 
 OUTPUT FORMAT (strict JSON):
 - Return ONLY a valid JSON array with this exact structure and no extra text.
 - DO NOT wrap the JSON in backticks or code fences.
-- It is allowed to have real newlines inside string values (for multi-line code blocks).
+- Inside JSON strings, ALL line breaks MUST be written as "\\n" (escaped). Do NOT include literal line breaks.
 
 Example of the required structure (this is only an example; use real questions from CONTENT):
 
@@ -141,10 +158,7 @@ Example of the required structure (this is only an example; use real questions f
   {
     "id": "q1",
     "type": "${type === 'mcq' ? 'mcq' : type === 'short-answer' ? 'short-answer' : 'mcq'}",
-    "question": "Question text here. It may include code or tables from CONTENT, for example:\\n\\n\`\`\`python
-def foo(x):
-    return x + 1
-\`\`\`",
+    "question": "What does the following code output?\\n\\n\`\`\`python\\ndef foo(x):\\n    return x + 1\\n\\nprint(foo(2))\\n\`\`\`",
     ${
       type === 'mcq' || type === 'mixed'
         ? '"options": ["Option A", "Option B", "Option C", "Option D"],'
@@ -173,7 +187,8 @@ Generate the JSON array now. Remember: valid JSON only, no extra commentary, no 
             'You are an educator that MUST create questions ONLY from the provided CONTENT. ' +
             'You are forbidden from using any outside knowledge not present in CONTENT. ' +
             'All options must reuse vocabulary and phrases from CONTENT and must be clearly grounded in it. ' +
-            'When CONTENT contains code/tables/formulas, you must copy them exactly, multi-line and properly indented, into questions instead of paraphrasing.',
+            'Questions must be written as direct standalone exam questions (no references to the text/content). ' +
+            'When CONTENT contains code/tables/examples/formulas, you must copy them exactly, multi-line and properly indented (using \\n in JSON strings), into the question instead of paraphrasing.',
         });
 
         const result = await model.generateContent(basePrompt);

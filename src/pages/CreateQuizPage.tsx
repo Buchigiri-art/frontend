@@ -208,55 +208,57 @@ export default function CreateQuizPage() {
         return;
       }
 
-      // 🔒 INTERNAL STRICT PROMPT to force:
+      // 🔒 INTERNAL STRICT PROMPT:
       // - Only use uploaded/pasted content
-      // - Options and questions must feel like textbook content
-      // - Code / tables / formulas are copied EXACTLY with proper multi-line alignment
+      // - Copy code/tables/examples exactly
+      // - Questions must be standalone (no "according to the above text")
       const internalStrictPrompt = `
 SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
 
 1. CONTENT-ONLY
-- You must treat the provided content as a textbook / notes.
+- Treat the provided CONTENT as textbook/notes.
 - You are NOT allowed to use any outside knowledge.
-- Every question, every option, every answer, and every explanation must be directly grounded in the given content.
-- If something is not mentioned in the content, do not create a question or option about it.
+- Every question, every option, every answer, and every explanation must be directly grounded in the CONTENT.
+- If something is not mentioned in the CONTENT, do not create a question or option about it.
 
-2. TEXTBOOK-LIKE QUESTIONS & OPTIONS
-- Questions should feel like they came from the textbook: same terminology, same notation, same symbols, same style.
-- All options (A/B/C/D) must also look like they are taken from the content:
-  - Reuse exact phrases, definitions, variable names, keywords, etc.
-  - Wrong options should be plausible twists/mixes of concepts already in the content, not random outside facts.
-- Do NOT invent new examples, numbers, APIs, libraries, functions, or case studies that do not appear in the content.
+2. DIRECT, STANDALONE QUESTIONS (NO META REFERENCES)
+- The final questions must look like normal exam questions.
+- DO NOT mention things like:
+  - "according to the above text"
+  - "from the given notes"
+  - "based on the content"
+  - "in the passage above"
+  - "in the provided material"
+- Just ask the question directly.
+- Example (GOOD):
+  - "What does the following code output?"
+- Example (BAD):
+  - "According to the above code in the content, what does it output?"
 
-3. CODE / TABLE / FORMULA HANDLING (VERY IMPORTANT)
-- If the content includes code examples (any language), configuration, command-line snippets, pseudo-code or similar, you MUST:
-  - Copy the exact code from the content (same variable names, same spacing, same structure).
-  - Preserve all original line breaks and indentation (multi-line code must stay multi-line).
-  - Use fenced Markdown code blocks inside the "question" string, for example:
-
-    "question": "Consider the following code snippet:\\n\\n\`\`\`python
-def foo(x):
-    return x + 1
-\`\`\`\\nWhat does this function return when x = 2?"
-
-- DO NOT compress multi-line code into a single line.
-- DO NOT paraphrase code like "the following function" when you have the actual code.
-- DO NOT add new code that is not present in the content.
+3. CODE / TABLE / EXAMPLE HANDLING (VERY IMPORTANT)
+- If the CONTENT includes code examples, configuration, command-line snippets, pseudo-code, or similar:
+  - Copy the exact code from the CONTENT (same variable names, same spacing, same structure).
+  - Preserve all original line breaks and indentation.
+  - Wrap code in Markdown code fences inside the "question" string, for example:
+    "question": "What does the following code do?\\n\\n\`\`\`python\\nfor i in range(3):\\n    print(i)\\n\`\`\`"
+- Do NOT compress multi-line code into a single line.
+- Do NOT paraphrase code like "the following function" if you can show the actual code.
+- Do NOT invent new code that is not present in the CONTENT.
 
 - For tables:
-  - If the content includes tables (e.g., markdown-style tables or any tabular data), copy them exactly.
-  - Preserve rows, columns, and separators as much as possible inside the question text.
+  - If the CONTENT includes tables (e.g., markdown-style tables or tabular data), copy them exactly into the question text.
+  - Keep rows and columns, using Markdown table syntax where possible.
 - For formulas:
   - Preserve exact notation (e.g., f(x), Σ, subscripts, superscripts, LaTeX math).
   - Do not rewrite formulas into a completely different style.
 
 4. ANSWERS & EXPLANATIONS
-- The correct answer MUST be directly justified by sentences or fragments in the content.
-- Explanations must only use information from the content and should reference the same wording/notation used there.
-- If you cannot clearly justify a question/answer from the content, you MUST NOT include that question.
+- The correct answer MUST be directly justified by sentences or fragments in the CONTENT.
+- Explanations must only use information from the CONTENT and should reference the same wording/notation used there.
+- If you cannot clearly justify a question/answer from the CONTENT, you MUST NOT include that question.
 
 5. VALIDATION CHECK (YOU MUST SELF-CHECK)
-- For every question you output, a human should be able to point to specific parts of the content that justify:
+- For every question you output, a human should be able to point to specific parts of the CONTENT that justify:
   - the question,
   - the correct answer,
   - each option,
@@ -383,7 +385,7 @@ def foo(x):
     );
   };
 
-  // ---------- PDF PARSER (kept as you provided) ----------
+  // ---------- PDF PARSER ----------
   const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
     console.log('=== PDF PARSER STARTED ===');
     console.log('RAW PDF TEXT:', text);
