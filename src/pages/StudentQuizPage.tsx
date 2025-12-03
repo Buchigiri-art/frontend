@@ -248,6 +248,10 @@ export default function StudentQuizPage() {
 
     setLoading(true);
     try {
+      const deviceType = isMobile ? 'mobile' : 'desktop';
+      const userAgent =
+        typeof navigator !== 'undefined' ? navigator.userAgent : '';
+
       const res = await axios.post(`${API_URL}/student-quiz/attempt/start`, {
         token: tokenRef.current,
         studentName,
@@ -255,6 +259,9 @@ export default function StudentQuizPage() {
         studentBranch,
         studentYear,
         studentSemester,
+        // 🔍 NEW: send device info so it can be shown in results
+        deviceType,
+        userAgent,
       });
 
       setAttemptId(res.data.attemptId);

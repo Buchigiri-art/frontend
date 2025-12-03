@@ -33,6 +33,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  AlertCircle,
+  Monitor,
+  Smartphone,
 } from 'lucide-react';
 import { quizAPI } from '@/services/api';
 import {
@@ -57,6 +60,13 @@ interface QuizAttempt {
   percentage: number;
   status: string;
   submittedAt: string;
+
+  // NEW: optional cheat / device fields from backend
+  isCheated?: boolean;
+  cheatReason?: string;
+  warningCount?: number;
+  deviceType?: 'mobile' | 'desktop' | string;
+  userAgent?: string;
 }
 
 interface AttemptQuestion {
@@ -89,6 +99,13 @@ interface AttemptDetail {
   startedAt?: string;
   gradedAt?: string;
   questions: AttemptQuestion[];
+
+  // optional cheat + device info on detail too
+  isCheated?: boolean;
+  cheatReason?: string;
+  warningCount?: number;
+  deviceType?: 'mobile' | 'desktop' | string;
+  userAgent?: string;
 }
 
 // A -> 0, B -> 1 etc
@@ -387,6 +404,34 @@ export default function QuizResultsPage() {
     })
     .slice(0, Math.min(leaderboardCount || 1, attempts.length));
 
+  const getDeviceLabelAndIcon = (
+    deviceType?: string
+  ): { label: string; icon: JSX.Element | null } => {
+    const type = (deviceType || '').toLowerCase();
+    if (type === 'mobile' || type === 'phone') {
+      return {
+        label: 'Mobile',
+        icon: <Smartphone className="h-3 w-3 mr-1" />,
+      };
+    }
+    if (type === 'desktop' || type === 'laptop' || type === 'pc') {
+      return {
+        label: 'Desktop / Laptop',
+        icon: <Monitor className="h-3 w-3 mr-1" />,
+      };
+    }
+    return {
+      label: 'Unknown',
+      icon: null,
+    };
+  };
+
+  const isCheatStatus = (attempt: QuizAttempt) => {
+    if (attempt.isCheated) return true;
+    const s = (attempt.status || '').toLowerCase();
+    return s.includes('cheat') || s.includes('blocked');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -535,7 +580,7 @@ export default function QuizResultsPage() {
           </div>
         )}
 
-        {/* Main Card: animated Results / Leaderboard toggle INSIDE header */}
+        {/* Main Card: Results / Leaderboard toggle */}
         <Card>
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -551,7 +596,7 @@ export default function QuizResultsPage() {
               </CardDescription>
             </div>
 
-            {/* Futuristic animated toggle */}
+            {/* Toggle */}
             <div
               className={`relative flex items-center rounded-full border bg-background/60 px-1 py-1 shadow-sm ${
                 viewMode === 'leaderboard'
@@ -686,6 +731,7 @@ export default function QuizResultsPage() {
                             <TableRow>
                               <TableHead>Student Name</TableHead>
                               <TableHead>USN</TableHead>
+                              <TableHead>Device</TableHead>
                               <TableHead>Branch</TableHead>
                               <TableHead>Year/Sem</TableHead>
                               <TableHead>Score</TableHead>
@@ -695,60 +741,84 @@ export default function QuizResultsPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {paginatedAttempts.map((attempt) => (
-                              <TableRow
-                                key={attempt._id}
-                                className="cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => openAttemptDetail(attempt)}
-                              >
-                                <TableCell className="font-medium">
-                                  {attempt.studentName}
-                                </TableCell>
-                                <TableCell>{attempt.studentUSN}</TableCell>
-                                <TableCell>{attempt.studentBranch}</TableCell>
-                                <TableCell>
-                                  {attempt.studentYear}/
-                                  {attempt.studentSemester}
-                                </TableCell>
-                                <TableCell>
-                                  {attempt.totalMarks}/{attempt.maxMarks}
-                                </TableCell>
-                                <TableCell>
-                                  <span
-                                    className={
-                                      (attempt.percentage || 0) >= 40
-                                        ? 'text-green-600 font-semibold'
-                                        : 'text-red-600 font-semibold'
-                                    }
-                                  >
-                                    {Number.isFinite(
-                                      attempt.percentage
-                                    )
-                                      ? attempt.percentage.toFixed(1)
-                                      : '0.0'}
-                                    %
-                                  </span>
-                                </TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant={
-                                      attempt.status === 'graded'
-                                        ? 'default'
-                                        : 'secondary'
-                                    }
-                                  >
-                                    {attempt.status}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {attempt.submittedAt
-                                    ? new Date(
-                                        attempt.submittedAt
-                                      ).toLocaleString()
-                                    : '-'}
-                                </TableCell>
-                              </TableRow>
-                            ))}
+                            {paginatedAttempts.map((attempt) => {
+                              const cheat = isCheatStatus(attempt);
+                              const device = getDeviceLabelAndIcon(
+                                attempt.deviceType
+                              );
+
+                              return (
+                                <TableRow
+                                  key={attempt._id}
+                                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                                  onClick={() => openAttemptDetail(attempt)}
+                                >
+                                  <TableCell className="font-medium">
+                                    {attempt.studentName}
+                                  </TableCell>
+                                  <TableCell>{attempt.studentUSN}</TableCell>
+                                  <TableCell>
+                                    <div className="flex items-center text-xs text-muted-foreground">
+                                      {device.icon}
+                                      {device.label}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    {attempt.studentBranch}
+                                  </TableCell>
+                                  <TableCell>
+                                    {attempt.studentYear}/
+                                    {attempt.studentSemester}
+                                  </TableCell>
+                                  <TableCell>
+                                    {attempt.totalMarks}/
+                                    {attempt.maxMarks}
+                                  </TableCell>
+                                  <TableCell>
+                                    <span
+                                      className={
+                                        (attempt.percentage || 0) >= 40
+                                          ? 'text-green-600 font-semibold'
+                                          : 'text-red-600 font-semibold'
+                                      }
+                                    >
+                                      {Number.isFinite(
+                                        attempt.percentage
+                                      )
+                                        ? attempt.percentage.toFixed(1)
+                                        : '0.0'}
+                                      %
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant={
+                                        cheat
+                                          ? 'destructive'
+                                          : attempt.status === 'graded'
+                                          ? 'default'
+                                          : 'secondary'
+                                      }
+                                      className="flex items-center gap-1"
+                                    >
+                                      {cheat && (
+                                        <AlertCircle className="h-3 w-3" />
+                                      )}
+                                      {cheat
+                                        ? 'Blocked / Cheated'
+                                        : attempt.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-muted-foreground">
+                                    {attempt.submittedAt
+                                      ? new Date(
+                                          attempt.submittedAt
+                                        ).toLocaleString()
+                                      : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       </div>
@@ -923,6 +993,7 @@ export default function QuizResultsPage() {
                                 const rank = index + 1;
                                 const isTop1 = rank === 1;
                                 const isTop3 = rank <= 3;
+                                const cheat = isCheatStatus(attempt);
 
                                 return (
                                   <TableRow
@@ -988,12 +1059,21 @@ export default function QuizResultsPage() {
                                     <TableCell>
                                       <Badge
                                         variant={
-                                          attempt.status === 'graded'
+                                          cheat
+                                            ? 'destructive'
+                                            : attempt.status ===
+                                              'graded'
                                             ? 'default'
                                             : 'secondary'
                                         }
+                                        className="flex items-center gap-1"
                                       >
-                                        {attempt.status}
+                                        {cheat && (
+                                          <AlertCircle className="h-3 w-3" />
+                                        )}
+                                        {cheat
+                                          ? 'Blocked / Cheated'
+                                          : attempt.status}
                                       </Badge>
                                     </TableCell>
                                   </TableRow>
@@ -1056,6 +1136,57 @@ export default function QuizResultsPage() {
                         ).toLocaleString()
                       : '-'}
                   </p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    {(() => {
+                      const cheat =
+                        attemptDetail.isCheated ||
+                        (attemptDetail.status || '')
+                          .toLowerCase()
+                          .includes('cheat') ||
+                        (attemptDetail.status || '')
+                          .toLowerCase()
+                          .includes('blocked');
+                      if (cheat) {
+                        return (
+                          <>
+                            <AlertCircle className="h-3 w-3 text-destructive" />
+                            <span className="font-semibold text-destructive">
+                              Status: Blocked / Cheated
+                            </span>
+                          </>
+                        );
+                      }
+                      return (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 text-green-600" />
+                          <span className="font-semibold text-green-700">
+                            Status: {attemptDetail.status || 'graded'}
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </p>
+                  {attemptDetail.cheatReason && (
+                    <p className="text-xs text-destructive">
+                      Reason: {attemptDetail.cheatReason}
+                    </p>
+                  )}
+                  {typeof attemptDetail.warningCount === 'number' && (
+                    <p className="text-xs text-muted-foreground">
+                      Warnings: {attemptDetail.warningCount}
+                    </p>
+                  )}
+                  {(() => {
+                    const device = getDeviceLabelAndIcon(
+                      attemptDetail.deviceType
+                    );
+                    return (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        {device.icon}
+                        Device: {device.label}
+                      </p>
+                    );
+                  })()}
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs">
                   <span className="font-semibold">
