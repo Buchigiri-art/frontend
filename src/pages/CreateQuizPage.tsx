@@ -250,7 +250,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
   - Keep rows and columns, using Markdown table syntax where possible.
 - For formulas:
   - Preserve exact notation (e.g., f(x), Σ, subscripts, superscripts, LaTeX math).
-  - Do not rewrite formulas into a completely different style.
+  - do not rewrite formulas into a completely different style.
 
 4. ANSWERS & EXPLANATIONS
 - The correct answer MUST be directly justified by sentences or fragments in the CONTENT.
@@ -366,7 +366,9 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
     id: `manual-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`,
-    // @ts-ignore (depends on your Question type)
+    // Make sure these field names match your Question type + QuestionEditor
+    // e.g. if QuestionEditor expects questionText, change to questionText: ''
+    // @ts-ignore
     question: '',
     // @ts-ignore
     answer: '',
@@ -385,10 +387,12 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
     );
   };
 
-  // ---------- PDF PARSER ----------
-  const parseQuestionsFromPdfText = (text: string): ExtendedQuestion[] => {
-    console.log('=== PDF PARSER STARTED ===');
-    console.log('RAW PDF TEXT:', text);
+  // ---------- QUESTION PAPER PARSER (PDF / TXT) ----------
+  const parseQuestionsFromQuestionPaperText = (
+    text: string
+  ): ExtendedQuestion[] => {
+    console.log('=== QUESTION PAPER PARSER STARTED ===');
+    console.log('RAW TEXT:', text);
 
     const normalizedText = text
       .replace(/===== Page \d+ =====/gi, '')
@@ -441,7 +445,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
               : '';
 
           const q: ExtendedQuestion = {
-            id: `pdf-${Date.now()}-${questionsParsed.length}`,
+            id: `qp-${Date.now()}-${questionsParsed.length}`,
             // @ts-ignore
             question: currentQuestion.questionText,
             // @ts-ignore
@@ -505,7 +509,9 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
 
         if (optionIndex >= 0) {
           currentQuestion.options[optionIndex] = text;
-          console.log(`   📋 OPTION ${letter} (index ${optionIndex}): ${text}`);
+          console.log(
+            `   📋 OPTION ${letter} (index ${optionIndex}): ${text}`
+          );
         }
         continue;
       }
@@ -571,7 +577,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
       finalizeQuestion();
     }
 
-    console.log('=== PDF PARSER COMPLETED ===');
+    console.log('=== QUESTION PAPER PARSER COMPLETED ===');
     console.log(`FOUND ${questionsParsed.length} QUESTIONS`);
     questionsParsed.forEach((q, index) => {
       console.log(
@@ -676,7 +682,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
     return questionsParsed;
   };
 
-  const handleManualPdfUpload = async (
+  const handleQuestionPaperUpload = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const files = e.target.files;
@@ -684,8 +690,8 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
 
     const file = files[0];
 
-    if (!isPDFFile(file)) {
-      toast.error('Please upload a PDF file with questions.');
+    if (!isPDFFile(file) && !file.name.toLowerCase().endsWith('.txt')) {
+      toast.error('Please upload a PDF or TXT file with questions.');
       return;
     }
 
@@ -693,11 +699,25 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
       setManualPdfLoading(true);
       toast.info(`Reading questions from ${file.name}...`);
 
-      const text = await extractTextFromPDF(file);
-      console.log('=== PDF EXTRACTION COMPLETE ===');
+      let text = '';
+
+      if (isPDFFile(file)) {
+        text = await extractTextFromPDF(file);
+      } else {
+        text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) =>
+            resolve((event.target?.result as string) || '');
+          reader.onerror = () =>
+            reject(new Error('Failed to read text file'));
+          reader.readAsText(file);
+        });
+      }
+
+      console.log('=== QUESTION PAPER TEXT EXTRACTION COMPLETE ===');
       console.log('EXTRACTED TEXT LENGTH:', text.length);
 
-      let parsedQuestions = parseQuestionsFromPdfText(text);
+      let parsedQuestions = parseQuestionsFromQuestionPaperText(text);
 
       if (parsedQuestions.length === 0) {
         console.log(
@@ -710,7 +730,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
         console.error('❌ ALL PARSERS FAILED - No questions detected');
         console.error('TEXT CONTENT FOR DEBUGGING:', text);
         toast.error(
-          `Could not detect any questions in the PDF. Please check:
+          `Could not detect any questions in the file. Please check:
           • Questions are numbered (1., 2., etc.)
           • Options use A., B., C., D.
           • Answers use "Answer: A" format
@@ -720,24 +740,26 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
       }
 
       setQuestions((prev) => {
-        const nonPdfQuestions = prev.filter(
-          (q) => !q.id?.includes('pdf-')
+        const nonImportedQuestions = prev.filter(
+          (q) =>
+            !q.id?.startsWith('pdf-') &&
+            !q.id?.startsWith('qp-')
         );
-        return [...nonPdfQuestions, ...parsedQuestions];
+        return [...nonImportedQuestions, ...parsedQuestions];
       });
 
       setCurrentQuizId(null);
 
       toast.success(
-        `✅ Imported ${parsedQuestions.length} question(s) from PDF`
+        `✅ Imported ${parsedQuestions.length} question(s) from ${file.name}`
       );
     } catch (err) {
       console.error(
-        '❌ Error importing questions from PDF:',
+        '❌ Error importing questions from file:',
         err
       );
       toast.error(
-        'Failed to extract questions from PDF. Please try another file.'
+        'Failed to extract questions. Please check the format or try another file.'
       );
     } finally {
       setManualPdfLoading(false);
@@ -1063,7 +1085,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
         </h1>
         <p className="text-sm md:text-base text-muted-foreground">
           Upload module content, generate AI-powered questions, import
-          existing PDFs, or add your own manually.
+          existing question papers, or add your own manually.
         </p>
       </div>
 
@@ -1313,7 +1335,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
             </CardContent>
           </Card>
 
-          {/* Manual Question Creation + PDF Import */}
+          {/* Manual Question Creation + Question Paper Import */}
           <Card className="shadow-card hover-scale transition-all">
             <CardHeader className="space-y-1 md:space-y-2 pb-3 md:pb-4">
               <CardTitle className="flex items-center gap-2 text-base md:text-lg lg:text-xl">
@@ -1322,7 +1344,7 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
               </CardTitle>
               <CardDescription className="text-xs md:text-sm">
                 Add your own questions without using AI, or import
-                existing question papers (PDF – Option A pattern).
+                existing question papers (PDF/TXT – Option A pattern).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1350,10 +1372,10 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
               <div className="pt-2 border-t mt-2 space-y-2">
                 <Label className="text-xs md:text-sm font-medium flex items-center gap-2">
                   <FileScan className="h-4 w-4 text-primary" />
-                  Import Questions from PDF (Option A Format)
+                  Import Questions from File (PDF/TXT, Option A Format)
                 </Label>
                 <p className="text-[11px] md:text-xs text-muted-foreground">
-                  Expected pattern inside PDF:
+                  Expected pattern inside file:
                   <br />
                   <code className="font-mono">
                     1. Question text...
@@ -1374,14 +1396,14 @@ SYSTEM-LEVEL RULES (VERY STRICT — MUST FOLLOW):
                     <FileScan className="h-6 w-6 mx-auto text-muted-foreground mb-1 group-hover:text-primary transition-colors" />
                     <p className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
                       {manualPdfLoading
-                        ? 'Processing PDF...'
-                        : 'Click to upload question paper (PDF)'}
+                        ? 'Processing file...'
+                        : 'Click to upload question paper (PDF/TXT)'}
                     </p>
                   </div>
                   <input
                     type="file"
-                    accept=".pdf"
-                    onChange={handleManualPdfUpload}
+                    accept=".pdf,.txt"
+                    onChange={handleQuestionPaperUpload}
                     className="hidden"
                     disabled={manualPdfLoading}
                   />
