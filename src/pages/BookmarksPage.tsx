@@ -8,6 +8,7 @@ import {
   Share2,
   FolderPlus,
   Folder,
+  Download, // ⬅️ NEW: for download button
 } from 'lucide-react';
 import {
   Card,
@@ -57,6 +58,8 @@ import {
 } from '@/components/ui/table';
 import { AnimatePresence, motion } from 'framer-motion';
 
+const SHARE_BATCH_SIZE = 100; // batch size for sending quiz links
+
 export default function BookmarksPage() {
   const navigate = useNavigate();
 
@@ -77,6 +80,13 @@ export default function BookmarksPage() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
+
+  // share progress for big email lists
+  const [shareProgress, setShareProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -117,9 +127,17 @@ export default function BookmarksPage() {
     if (bookmark.type === 'quiz') {
       navigate('/create-quiz', { state: { editQuiz: bookmark.quiz } });
     } else {
-      navigate('/create-quiz', { state: { editQuestion: bookmark.question } });
+      navigate('/create-quiz', {
+        state: { editQuestion: bookmark.question },
+      });
     }
     toast.info('Opening in Create Quiz page');
+  };
+
+  // Edit a single question from a bookmarked quiz
+  const handleEditQuestionFromBookmark = (question: any) => {
+    navigate('/create-quiz', { state: { editQuestion: question } });
+    toast.info('Opening question in Create Quiz page');
   };
 
   const handleCreateFolder = async () => {
@@ -129,7 +147,9 @@ export default function BookmarksPage() {
     }
 
     try {
-      const newFolder = await foldersAPI.create({ name: newFolderName });
+      const newFolder = await foldersAPI.create({
+        name: newFolderName,
+      });
       setFolders((prev) => [...prev, newFolder]);
       setNewFolderName('');
       setNewFolderDialogOpen(false);
@@ -140,6 +160,68 @@ export default function BookmarksPage() {
     }
   };
 
+  // ✅ NEW: Download quiz questions as .txt
+  const handleDownloadQuizQuestions = (bookmark: any) => {
+    const quiz = bookmark.quiz;
+    if (!quiz || !Array.isArray(quiz.questions)) {
+      toast.error('No questions found for this quiz');
+      return;
+    }
+
+    const lines: string[] = [];
+
+    lines.push(`Quiz: ${quiz.title || 'Untitled Quiz'}`);
+    if (quiz.description) {
+      lines.push(`Description: ${quiz.description}`);
+    }
+    lines.push(`Difficulty: ${quiz.difficulty || 'medium'}`);
+    lines.push(`Duration: ${quiz.duration || 30} mins`);
+    lines.push(`Total Questions: ${quiz.questions.length}`);
+    lines.push('');
+    lines.push('----------------------------------------');
+    lines.push('');
+
+    quiz.questions.forEach((q: any, index: number) => {
+      lines.push(`Q${index + 1}. ${q.question || ''}`);
+      lines.push('');
+
+      if (Array.isArray(q.options) && q.options.length > 0) {
+        q.options.forEach((opt: string, oi: number) => {
+          const letter = String.fromCharCode(65 + oi); // A, B, C, D...
+          lines.push(`  ${letter}. ${opt || ''}`);
+        });
+        lines.push('');
+      }
+
+      if (q.answer) {
+        lines.push(`Answer: ${q.answer}`);
+      }
+
+      if (q.explanation) {
+        lines.push(`Explanation: ${q.explanation}`);
+      }
+
+      lines.push('');
+      lines.push('----------------------------------------');
+      lines.push('');
+    });
+
+    const content = lines.join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    const safeTitle =
+      (quiz.title || 'quiz').replace(/[^a-z0-9_\-]+/gi, '_') || 'quiz';
+    a.download = `${safeTitle}_questions.txt`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+    toast.success('Questions downloaded as .txt');
+  };
+
+  // Batched sharing for large email lists
   const handleShareQuiz = async () => {
     if (!selectedQuizForShare) return;
     if (students.length === 0) {
@@ -148,6 +230,9 @@ export default function BookmarksPage() {
     }
 
     try {
+      setIsSharing(true);
+      setShareProgress(null);
+
       // 1) Save quiz (in case it only exists as bookmark)
       const saved = await quizAPI.save({
         title: selectedQuizForShare.quiz.title,
@@ -160,30 +245,90 @@ export default function BookmarksPage() {
         folderId: selectedQuizForShare.folderId,
       } as any);
 
-      // 2) Build list of emails
-      const studentEmails =
+      const quizId =
+        saved.quizId ||
+        saved?.quiz?._id ||
+        saved?.quiz?.id ||
+        saved?.quizId;
+
+      if (!quizId) {
+        throw new Error('Server did not return quizId');
+      }
+
+      // 2) Build list of emails (selected or all)
+      let studentEmails: string[] =
         selectedStudents.length > 0
           ? students
               .filter((s) => selectedStudents.includes(s._id))
               .map((s) => s.email)
           : students.map((s) => s.email);
 
-      const result = await quizAPI.share({
-        quizId: saved.quizId,
-        studentEmails,
-        links: [],
-      });
+      // clean + unique
+      studentEmails = Array.from(
+        new Set(
+          studentEmails
+            .map((e) => String(e || '').trim())
+            .filter((e) => e && e.includes('@'))
+        )
+      );
+
+      if (studentEmails.length === 0) {
+        toast.error('No valid student emails to share to');
+        return;
+      }
+
+      const total = studentEmails.length;
+      const allLinks: Array<{ email: string; link: string }> = [];
+
+      // 3) Send in batches to avoid lag / overload
+      for (let i = 0; i < studentEmails.length; i += SHARE_BATCH_SIZE) {
+        const batchEmails = studentEmails.slice(
+          i,
+          i + SHARE_BATCH_SIZE
+        );
+
+        setShareProgress({
+          current: Math.min(i + SHARE_BATCH_SIZE, total),
+          total,
+        });
+
+        const result: any = await quizAPI.share({
+          quizId,
+          studentEmails: batchEmails,
+          links: [],
+          forceResend: true,
+        });
+
+        const linksFromResult = Array.isArray(result.links)
+          ? result.links
+          : [];
+
+        linksFromResult.forEach((l: any) => {
+          if (l && l.email && l.link) {
+            allLinks.push({ email: l.email, link: l.link });
+          }
+        });
+      }
 
       toast.success(
-        `Quiz shared with ${result.links?.length || 0} student(s)`
+        `Quiz links generated for ${allLinks.length || 0} student(s) in ${Math.ceil(
+          studentEmails.length / SHARE_BATCH_SIZE
+        )} batch(es).`
       );
+
       setShareDialogOpen(false);
       setSelectedQuizForShare(null);
       setSelectedStudents([]);
       setStudentSearch('');
-    } catch (error) {
+      setShareProgress(null);
+    } catch (error: any) {
       console.error('Error sharing quiz:', error);
-      toast.error('Failed to share quiz');
+      toast.error(
+        error?.message || 'Failed to share quiz. Please try again.'
+      );
+      setShareProgress(null);
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -192,6 +337,7 @@ export default function BookmarksPage() {
     setSelectedStudents([]);
     setStudentSearch('');
     setShareDialogOpen(true);
+    setShareProgress(null);
   };
 
   const toggleStudentSelection = (studentId: string) => {
@@ -467,6 +613,17 @@ export default function BookmarksPage() {
                                           size="sm"
                                           variant="outline"
                                           onClick={() =>
+                                            handleDownloadQuizQuestions(
+                                              bookmark
+                                            )
+                                          }
+                                        >
+                                          <Download className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() =>
                                             openShareDialog(bookmark)
                                           }
                                         >
@@ -500,8 +657,8 @@ export default function BookmarksPage() {
                                       <AccordionItem value="questions">
                                         <AccordionTrigger className="text-sm">
                                           View All Questions (
-                                          {bookmark.quiz?.questions?.length ||
-                                            0}
+                                          {bookmark.quiz?.questions
+                                            ?.length || 0}
                                           )
                                         </AccordionTrigger>
                                         <AccordionContent>
@@ -514,17 +671,34 @@ export default function BookmarksPage() {
                                                 >
                                                   <div className="space-y-2">
                                                     <div className="flex items-start justify-between gap-2">
-                                                      <p className="text-sm font-medium flex-1">
+                                                      {/* multi-line question, with preserved newlines */}
+                                                      <pre className="text-sm font-medium flex-1 whitespace-pre-wrap break-words">
                                                         {idx + 1}.{' '}
                                                         {q.question}
-                                                      </p>
-                                                      <Badge
-                                                        variant="secondary"
-                                                        className="text-xs capitalize"
-                                                      >
-                                                        {q.type}
-                                                      </Badge>
+                                                      </pre>
+                                                      <div className="flex flex-col items-end gap-1">
+                                                        <Badge
+                                                          variant="secondary"
+                                                          className="text-xs capitalize"
+                                                        >
+                                                          {q.type}
+                                                        </Badge>
+                                                        <Button
+                                                          size="icon"
+                                                          variant="ghost"
+                                                          className="h-7 w-7"
+                                                          onClick={() =>
+                                                            handleEditQuestionFromBookmark(
+                                                              q
+                                                            )
+                                                          }
+                                                        >
+                                                          <FileEdit className="h-3 w-3" />
+                                                        </Button>
+                                                      </div>
                                                     </div>
+
+                                                    {/* options */}
                                                     {q.options &&
                                                       q.options.length >
                                                         0 && (
@@ -538,7 +712,7 @@ export default function BookmarksPage() {
                                                                 key={
                                                                   oi
                                                                 }
-                                                                className="text-xs text-muted-foreground"
+                                                                className="text-xs text-muted-foreground whitespace-pre-wrap break-words"
                                                               >
                                                                 {String.fromCharCode(
                                                                   65 +
@@ -551,8 +725,10 @@ export default function BookmarksPage() {
                                                           )}
                                                         </div>
                                                       )}
+
+                                                    {/* explanation */}
                                                     {q.explanation && (
-                                                      <p className="text-xs text-muted-foreground italic pl-4">
+                                                      <p className="text-xs text-muted-foreground italic pl-4 whitespace-pre-wrap break-words">
                                                         💡{' '}
                                                         {
                                                           q.explanation
@@ -613,7 +789,10 @@ export default function BookmarksPage() {
               </Button>
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="student-search" className="text-xs md:text-sm">
+              <Label
+                htmlFor="student-search"
+                className="text-xs md:text-sm"
+              >
                 Search
               </Label>
               <Input
@@ -694,19 +873,27 @@ export default function BookmarksPage() {
             </div>
           </div>
 
+          {shareProgress && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Sending links... {shareProgress.current}/
+              {shareProgress.total} students processed
+            </p>
+          )}
+
           <div className="flex gap-2 justify-end mt-4">
             <Button
               variant="outline"
               onClick={() => setShareDialogOpen(false)}
+              disabled={isSharing}
             >
               Cancel
             </Button>
             <Button
               onClick={handleShareQuiz}
-              disabled={students.length === 0}
+              disabled={students.length === 0 || isSharing}
             >
               <Share2 className="h-4 w-4 mr-2" />
-              Share Quiz
+              {isSharing ? 'Sharing...' : 'Share Quiz'}
             </Button>
           </div>
         </DialogContent>
