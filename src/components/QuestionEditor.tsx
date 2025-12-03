@@ -1,5 +1,12 @@
 import { useState } from 'react';
-import { Edit2, Bookmark, BookmarkCheck, Trash2, Save, X } from 'lucide-react';
+import {
+  Edit2,
+  Bookmark,
+  BookmarkCheck,
+  Trash2,
+  Save,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,7 +32,7 @@ export function QuestionEditor({
   onToggleSelect,
 }: QuestionEditorProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [editedQuestion, setEditedQuestion] = useState(question);
+  const [editedQuestion, setEditedQuestion] = useState<Question>(question);
 
   const handleSave = () => {
     onUpdate(editedQuestion);
@@ -43,8 +50,24 @@ export function QuestionEditor({
     setEditedQuestion({ ...editedQuestion, options: newOptions });
   };
 
+  // Support both:
+  // - MCQ with answer as letter (A/B/C/D)
+  // - MCQ with answer as the full option text
+  const isOptionCorrect = (option: string, optionIndex: number) => {
+    const letter = String.fromCharCode(65 + optionIndex); // A, B, C, D
+    const ans = (question.answer || '').trim();
+    return (
+      ans === letter || // letter-based
+      ans.toLowerCase() === option.trim().toLowerCase() // text-based
+    );
+  };
+
   return (
-    <Card className={`p-4 transition-all ${question.isSelected ? 'border-primary/50' : 'opacity-60'}`}>
+    <Card
+      className={`p-4 transition-all ${
+        question.isSelected ? 'border-primary/50' : 'opacity-60'
+      }`}
+    >
       <div className="flex items-start gap-3">
         {/* Selection Checkbox */}
         <Checkbox
@@ -61,7 +84,9 @@ export function QuestionEditor({
                 Question {index + 1}
               </span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                {question.type === 'mcq' ? 'Multiple Choice' : 'Short Answer'}
+                {question.type === 'mcq'
+                  ? 'Multiple Choice'
+                  : 'Short Answer'}
               </span>
             </div>
 
@@ -104,62 +129,108 @@ export function QuestionEditor({
           {/* Question Content */}
           {isEditing ? (
             <div className="space-y-3">
+              {/* Question text (multi-line, good for code/tables/examples) */}
               <div>
-                <label className="text-sm font-medium mb-1 block">Question Text</label>
+                <label className="text-sm font-medium mb-1 block">
+                  Question Text
+                </label>
                 <Textarea
                   value={editedQuestion.question}
                   onChange={(e) =>
-                    setEditedQuestion({ ...editedQuestion, question: e.target.value })
+                    setEditedQuestion({
+                      ...editedQuestion,
+                      question: e.target.value,
+                    })
                   }
-                  className="min-h-[80px]"
+                  className="min-h-[100px] whitespace-pre-wrap"
+                  placeholder="Type or edit the question here. You can paste code, tables, or multi-line examples."
                 />
               </div>
 
-              {editedQuestion.type === 'mcq' && editedQuestion.options && (
-                <div>
-                  <label className="text-sm font-medium mb-2 block">Options</label>
-                  <div className="space-y-2">
-                    {editedQuestion.options.map((option, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="text-sm font-medium w-6">{String.fromCharCode(65 + i)}.</span>
-                        <Input
-                          value={option}
-                          onChange={(e) => updateOption(i, e.target.value)}
-                        />
-                      </div>
-                    ))}
+              {/* MCQ options */}
+              {editedQuestion.type === 'mcq' &&
+                editedQuestion.options && (
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">
+                      Options
+                    </label>
+                    <div className="space-y-2">
+                      {editedQuestion.options.map((option, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center gap-2"
+                        >
+                          <span className="text-sm font-medium w-6">
+                            {String.fromCharCode(65 + i)}.
+                          </span>
+                          <Input
+                            value={option}
+                            onChange={(e) =>
+                              updateOption(i, e.target.value)
+                            }
+                            placeholder={`Option ${String.fromCharCode(
+                              65 + i
+                            )}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
+              {/* Answer */}
               <div>
-                <label className="text-sm font-medium mb-1 block">Correct Answer</label>
+                <label className="text-sm font-medium mb-1 block">
+                  Correct Answer
+                </label>
                 <Input
                   value={editedQuestion.answer}
                   onChange={(e) =>
-                    setEditedQuestion({ ...editedQuestion, answer: e.target.value })
+                    setEditedQuestion({
+                      ...editedQuestion,
+                      answer: e.target.value,
+                    })
                   }
-                  placeholder={editedQuestion.type === 'mcq' ? 'e.g., A' : 'Expected answer'}
+                  placeholder={
+                    editedQuestion.type === 'mcq'
+                      ? 'e.g., A or full correct option text'
+                      : 'Expected answer'
+                  }
                 />
               </div>
 
+              {/* Explanation */}
               <div>
-                <label className="text-sm font-medium mb-1 block">Explanation (Optional)</label>
+                <label className="text-sm font-medium mb-1 block">
+                  Explanation (Optional)
+                </label>
                 <Textarea
                   value={editedQuestion.explanation || ''}
                   onChange={(e) =>
-                    setEditedQuestion({ ...editedQuestion, explanation: e.target.value })
+                    setEditedQuestion({
+                      ...editedQuestion,
+                      explanation: e.target.value,
+                    })
                   }
-                  className="min-h-[60px]"
+                  className="min-h-[80px] whitespace-pre-wrap"
+                  placeholder="Explain why this answer is correct. You can also paste multi-line explanation here."
                 />
               </div>
 
               <div className="flex gap-2">
-                <Button onClick={handleSave} size="sm" className="gradient-primary">
+                <Button
+                  onClick={handleSave}
+                  size="sm"
+                  className="gradient-primary"
+                >
                   <Save className="h-4 w-4 mr-1" />
                   Save Changes
                 </Button>
-                <Button onClick={handleCancel} variant="outline" size="sm">
+                <Button
+                  onClick={handleCancel}
+                  variant="outline"
+                  size="sm"
+                >
                   <X className="h-4 w-4 mr-1" />
                   Cancel
                 </Button>
@@ -167,40 +238,63 @@ export function QuestionEditor({
             </div>
           ) : (
             <div className="space-y-2">
-              <p className="text-base font-medium">{question.question}</p>
+              {/* VIEW MODE: show question with newlines preserved (good for code/tables/examples) */}
+              <div className="bg-muted/40 rounded-md px-3 py-2">
+                <pre className="text-base font-medium whitespace-pre-wrap break-words">
+                  {question.question}
+                </pre>
+              </div>
 
+              {/* MCQ view */}
               {question.type === 'mcq' && question.options && (
                 <div className="space-y-1.5 pl-4">
-                  {question.options.map((option, i) => (
-                    <div
-                      key={i}
-                      className={`text-sm p-2 rounded ${
-                        question.answer === String.fromCharCode(65 + i)
-                          ? 'bg-green-50 border border-green-200 font-medium'
-                          : 'bg-muted/30'
-                      }`}
-                    >
-                      <span className="font-semibold mr-2">{String.fromCharCode(65 + i)}.</span>
-                      {option}
-                      {question.answer === String.fromCharCode(65 + i) && (
-                        <span className="ml-2 text-green-600 text-xs">✓ Correct</span>
-                      )}
-                    </div>
-                  ))}
+                  {question.options.map((option, i) => {
+                    const correct = isOptionCorrect(option, i);
+                    return (
+                      <div
+                        key={i}
+                        className={`text-sm p-2 rounded break-words ${
+                          correct
+                            ? 'bg-green-50 border border-green-200 font-medium'
+                            : 'bg-muted/30'
+                        }`}
+                      >
+                        <span className="font-semibold mr-2">
+                          {String.fromCharCode(65 + i)}.
+                        </span>
+                        {option}
+                        {correct && (
+                          <span className="ml-2 text-green-600 text-xs">
+                            ✓ Correct
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
+              {/* Short answer view */}
               {question.type === 'short-answer' && (
                 <div className="bg-green-50 border border-green-200 p-3 rounded">
-                  <p className="text-sm font-medium text-green-900">Expected Answer:</p>
-                  <p className="text-sm text-green-800 mt-1">{question.answer}</p>
+                  <p className="text-sm font-medium text-green-900">
+                    Expected Answer:
+                  </p>
+                  <pre className="text-sm text-green-800 mt-1 whitespace-pre-wrap break-words">
+                    {question.answer}
+                  </pre>
                 </div>
               )}
 
+              {/* Explanation view */}
               {question.explanation && (
                 <div className="bg-blue-50 border border-blue-200 p-3 rounded">
-                  <p className="text-sm font-medium text-blue-900">Explanation:</p>
-                  <p className="text-sm text-blue-800 mt-1">{question.explanation}</p>
+                  <p className="text-sm font-medium text-blue-900">
+                    Explanation:
+                  </p>
+                  <pre className="text-sm text-blue-800 mt-1 whitespace-pre-wrap break-words">
+                    {question.explanation}
+                  </pre>
                 </div>
               )}
             </div>
